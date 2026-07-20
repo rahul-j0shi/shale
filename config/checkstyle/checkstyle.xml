@@ -1,0 +1,253 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  Shale / Flotilla Checkstyle configuration.
+
+  Scope: this file enforces only the rules a formatter cannot. Whitespace, wrapping,
+  and import ordering are handled by Spotless + google-java-format; duplicating them
+  here produces conflicting failures.
+
+  Rules here map 1:1 onto documentation/conventions/. Where a rule looks unusual,
+  the comment names the convention section it enforces. If you disable something,
+  say why in the commit body.
+-->
+<module name="Checker">
+  <property name="severity" value="error"/>
+  <property name="fileExtensions" value="java"/>
+
+  <!-- ================= file-level ================= -->
+
+  <module name="NewlineAtEndOfFile"/>
+  <module name="FileTabCharacter"/>
+  <module name="UniqueProperties"/>
+
+  <!-- package-info.java required in every package. naming.md §3 -->
+  <module name="JavadocPackage"/>
+
+  <!-- ================= banned APIs (java-style.md §7) ================= -->
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="System\.(out|err)\.print"/>
+    <property name="message"
+              value="Use the SLF4J logger, not System.out/err. See errors-and-logging.md §2."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="printStackTrace\(\)"/>
+    <property name="message"
+              value="Log through SLF4J or propagate. See errors-and-logging.md §1."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="Thread\.sleep\("/>
+    <property name="message"
+              value="No Thread.sleep, including in tests. Inject a Clock. See CLAUDE.md N8."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="new\s+Random\(\s*\)"/>
+    <property name="message"
+              value="Seed every Random and log the seed. See testing.md §2."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="System\.(currentTimeMillis|nanoTime)\(\)|Instant\.now\(\)"/>
+    <property name="message"
+              value="Take a java.time.Clock instead of reading the wall clock directly. See testing.md §2."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="@Disabled|@Ignore"/>
+    <property name="message"
+              value="Do not disable tests. Fix or delete. See CLAUDE.md N7."/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <!-- Reminder that on-disk integers are always explicitly little-endian.
+       on-disk-formats.md §2. Downgraded to warning: legitimate in RPC code. -->
+  <module name="RegexpSinglelineJava">
+    <property name="format" value="ByteOrder\.(BIG_ENDIAN|nativeOrder)"/>
+    <property name="message"
+              value="On-disk formats are LITTLE_ENDIAN. Confirm this is wire/RPC code."/>
+    <property name="severity" value="warning"/>
+    <property name="ignoreComments" value="true"/>
+  </module>
+
+  <module name="TreeWalker">
+
+    <!-- ================= naming (naming.md) ================= -->
+
+    <!-- Types: PascalCase, with SSTable as the one permitted acronym. naming.md §2 -->
+    <module name="TypeName">
+      <property name="format" value="^(SSTable[A-Z][a-zA-Z0-9]*|[A-Z][a-zA-Z0-9]*)$"/>
+      <message key="name.invalidPattern"
+               value="Type ''{0}'' must be PascalCase. Acronyms are words (WalWriter, not
+                      WALWriter); SSTable is the single documented exception. naming.md §2."/>
+    </module>
+
+    <!-- Reject screaming acronyms anywhere in a type name except the SSTable prefix. -->
+    <module name="RegexpSinglelineJava">
+      <property name="format"
+                value="(class|interface|enum|record)\s+(?!SSTable)[A-Za-z0-9]*(WAL|LSM|MVCC|CRC|SST|RPC|ID)[A-Z]"/>
+      <property name="message"
+                value="Acronyms are PascalCase words: WalWriter, LsmTree, MvccSnapshot,
+                       SSTableId. See naming.md §2."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <!-- Interfaces are named for the role, not decorated. naming.md §4 -->
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="interface\s+I[A-Z]"/>
+      <property name="message" value="No Hungarian interface prefix. naming.md §4."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="(class|interface)\s+\w+(Impl|Utils|Helper|Manager|Misc)\b"/>
+      <property name="message"
+                value="Name the implementation for how it differs (LeveledCompactor), and
+                       find a home for helpers. naming.md §3, §4."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="MethodName">
+      <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+    </module>
+    <module name="MemberName"/>
+    <module name="ParameterName"/>
+    <module name="LocalVariableName">
+      <!-- k and v are banned; write key and value. naming.md §6 -->
+      <property name="format" value="^(?!k$|v$)[a-z][a-zA-Z0-9]*$"/>
+    </module>
+    <module name="ConstantName"/>
+    <module name="PackageName">
+      <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+    </module>
+
+    <!-- No layer-named packages. naming.md §3 -->
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="^package\s+.*\.(util|utils|common|helpers|misc|base)\b"/>
+      <property name="message"
+                value="Package by feature, not by layer. naming.md §3."/>
+    </module>
+
+    <!-- ================= imports ================= -->
+
+    <module name="AvoidStarImport"/>
+    <module name="UnusedImports"/>
+    <module name="RedundantImport"/>
+    <module name="IllegalImport">
+      <property name="illegalPkgs" value="sun, com.sun, sun.misc, sun.nio"/>
+      <property name="illegalClasses"
+                value="java.util.Date, java.util.Stack, java.util.Vector,
+                       java.util.Hashtable, java.lang.StringBuffer"/>
+    </module>
+
+    <!-- Banned dependencies (java-style.md §1). CI also checks the resolved graph;
+         this catches it at the point of writing. -->
+    <module name="IllegalImport">
+      <property name="illegalPkgs"
+                value="com.google.common, com.github.benmanes.caffeine, org.ehcache,
+                       lombok, org.springframework, com.google.inject,
+                       org.rocksdb, org.mapdb, jetbrains.exodus,
+                       org.apache.ratis, io.atomix"/>
+    </module>
+
+    <!-- ================= structure ================= -->
+
+    <module name="OuterTypeFilename"/>
+    <module name="OneTopLevelClass"/>
+    <module name="NeedBraces"/>
+    <module name="LeftCurly"/>
+    <module name="RightCurly"/>
+    <module name="EmptyCatchBlock">
+      <property name="exceptionVariableName" value="expected|ignored"/>
+    </module>
+    <module name="NestedIfDepth">
+      <property name="max" value="3"/>
+    </module>
+    <module name="NestedTryDepth">
+      <property name="max" value="2"/>
+    </module>
+    <module name="ReturnCount">
+      <property name="max" value="4"/>
+      <property name="maxForVoid" value="4"/>
+    </module>
+    <module name="ParameterNumber">
+      <property name="max" value="4"/>
+      <property name="tokens" value="METHOD_DEF"/>
+    </module>
+    <module name="BooleanExpressionComplexity">
+      <property name="max" value="4"/>
+    </module>
+    <module name="MethodLength">
+      <property name="max" value="80"/>
+    </module>
+
+    <!-- ================= correctness ================= -->
+
+    <module name="EqualsHashCode"/>
+    <module name="CovariantEquals"/>
+    <module name="NoFinalizer"/>
+    <module name="IllegalCatch">
+      <!-- Permitted only at background-thread boundaries; suppress there with a reason. -->
+      <property name="illegalClassNames"
+                value="java.lang.Exception, java.lang.Throwable, java.lang.RuntimeException"/>
+    </module>
+    <module name="IllegalThrows"/>
+    <module name="FallThrough"/>
+    <module name="MissingSwitchDefault"/>
+    <module name="ModifiedControlVariable"/>
+    <module name="MultipleVariableDeclarations"/>
+    <module name="StringLiteralEquality"/>
+    <module name="SimplifyBooleanExpression"/>
+    <module name="SimplifyBooleanReturn"/>
+    <module name="VisibilityModifier">
+      <property name="protectedAllowed" value="false"/>
+    </module>
+    <module name="FinalClass"/>
+    <module name="HideUtilityClassConstructor"/>
+    <module name="DeclarationOrder"/>
+    <module name="ExplicitInitialization"/>
+
+    <!-- ================= javadoc (java-style.md §5) ================= -->
+
+    <module name="JavadocType">
+      <property name="scope" value="public"/>
+    </module>
+    <module name="JavadocMethod">
+      <property name="accessModifiers" value="public"/>
+      <property name="allowMissingParamTags" value="true"/>
+      <property name="allowMissingReturnTag" value="true"/>
+    </module>
+    <module name="MissingJavadocType">
+      <property name="scope" value="public"/>
+    </module>
+    <module name="NonEmptyAtclauseDescription"/>
+    <module name="InvalidJavadocPosition"/>
+
+    <!-- ================= TODOs need an owner and a reason ================= -->
+
+    <module name="TodoComment">
+      <property name="format" value="TODO(?!\([a-z]+, M\d+\):)"/>
+      <property name="message"
+                value="Format: TODO(owner, M6): reason. Bare TODOs are banned. commits.md §3."/>
+    </module>
+
+    <!-- ================= suppression ================= -->
+
+    <module name="SuppressionCommentFilter">
+      <property name="offCommentFormat" value="CHECKSTYLE.OFF: (\w+) — (.+)"/>
+      <property name="onCommentFormat" value="CHECKSTYLE.ON: (\w+)"/>
+      <property name="checkFormat" value="$1"/>
+    </module>
+  </module>
+</module>

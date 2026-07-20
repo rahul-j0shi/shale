@@ -1,0 +1,26 @@
+# <type>(<scope>): <subject>            <- imperative, <=72 chars, no period
+#
+# Why this change? What problem, what approach, what was rejected.
+# Wrap at 72 columns.
+#
+#
+# --- trailers (delete what does not apply) ---
+# Milestone: M0                       <- required on feat/fix
+# Format-Change: <format> vN — <what> <- REQUIRED if disk/wire bytes changed
+# Reversible: no — <what makes it so> <- required for API/format/module changes
+# Benchmark: <before> → <after> (<harness>, bench/NNNN)   <- required on perf
+# ADR: NNNN
+# Refs: <paper, chapter, reference implementation>
+# Co-Authored-By: Claude <noreply@anthropic.com>
+#
+# --- types ---
+# feat fix perf refactor test docs build style chore
+#
+# --- scopes ---
+# wal memtable sstable compaction filter manifest iterator cache mvcc
+# recovery api bench raft region rpc pd docs build
+#
+# Reminders:
+#   - one logical change per commit; it must build on its own
+#   - a fix commit includes the test that failed without it
+#   - formatting churn goes in its own commit
