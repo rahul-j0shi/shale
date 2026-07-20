@@ -155,6 +155,11 @@ optimisation — in that order, with the benchmark committed before the optimisa
 Do not micro-optimise a path nobody has measured. "This avoids an allocation" is not
 a justification without a JMH result.
 
+**Branch before you build.** Every change — feature, fix, refactor, doc, or experiment
+— starts on its own purpose-named branch cut from `main`; never commit to `main`
+directly. One branch, one unit of work. Branch anchored to hard-to-reverse work opens
+with the ADR, not code. Prefixes, scope, and lifecycle: `documentation/conventions/commits.md` §5.
+
 **Small, single-purpose commits.** One logical change per commit. Formatting churn goes
 in its own commit. See `documentation/conventions/commits.md`.
 

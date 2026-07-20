@@ -14,7 +14,9 @@ Requires JDK 25. No other local tooling — the Gradle wrapper brings its own.
 
 1. Read the current milestone in `documentation/roadmap/`. Work belongs to exactly one
    milestone, and milestones are strictly ordered.
-2. Branch: `m06/leveled-compaction`.
+2. **Branch first — never work on `main`.** Cut a branch before the first line of
+   change: `m06/leveled-compaction`. One branch, one purpose. Prefixes and lifecycle
+   are in `documentation/conventions/commits.md` §5.
 3. If the change touches an on-disk format, a public API, the module graph, or anything
    the roadmap marks hard-to-reverse — write the ADR first and stop there until it is
    accepted.
@@ -26,6 +28,7 @@ Requires JDK 25. No other local tooling — the Gradle wrapper brings its own.
 
 ## Before you push
 
+- [ ] On a purpose-named branch, not `main`; rebased onto `main`, not merged
 - [ ] `./gradlew build` green, `crashTest` green
 - [ ] New public types have Javadoc with **Threading**, **Ownership**, and a citation
 - [ ] New mutable fields declare a concurrency contract

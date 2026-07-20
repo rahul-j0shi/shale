@@ -92,9 +92,10 @@ git config commit.template .gitmessage
 
 ## 3. Granularity
 
-**One logical change per commit.** Each commit compiles and passes `./gradlew build`
-on its own — `git bisect` is a primary debugging tool for a storage engine, and it is
-worthless across commits that do not build.
+**One logical change per commit**, and **every commit lands on a branch, never on
+`main` directly** (§5). Each commit compiles and passes `./gradlew build` on its own —
+`git bisect` is a primary debugging tool for a storage engine, and it is worthless
+across commits that do not build.
 
 Specifically:
 - Formatting and renames go in their own `style`/`refactor` commit, never mixed with
@@ -123,22 +124,56 @@ it was worth measuring. If it was not worth measuring, revert it.
 
 ## 5. Branches
 
-```
-m06/leveled-compaction        milestone work
-fix/wal-torn-tail             bug fix
-spike/art-memtable            throwaway experiment, never merged
-adr/0007-compaction-strategy  decision record
-```
+**Every change starts on a branch. Nothing is committed directly to `main`.** Before
+you write the first line of a feature, a bug fix, a refactor, an experiment, or a doc
+change, cut a branch for it. One branch is one unit of work — one feature, one fix, one
+spike, one ADR — and it is the thing that eventually lands on `main`.
 
-Lowercase, hyphenated, no personal names, no ticket numbers (there is no tracker —
-the roadmap is the tracker).
+`main` is always releasable: every commit on it builds and passes the full non-soak
+suite. The only way onto `main` is by integrating a finished branch (§5.3) — never by
+committing to it.
 
-`main` always builds and always passes the full non-soak suite. Milestone branches may
-be long-lived; rebase them onto `main` rather than merging `main` into them, so the
-history reads linearly.
+### 5.1 Naming
 
-Tag milestone completions: `m06-compaction`, and write a short release note in
-`documentation/roadmap/`. Those tags are the checkpoints you will demo from.
+`<prefix>/<short-kebab-slug>` — lowercase, hyphenated, no personal names, no ticket
+numbers (there is no tracker; the roadmap is the tracker). The slug names the change in
+three to five words, describing the change, not the file it touches.
+
+| Prefix | For | Example |
+|---|---|---|
+| `mNN/` | Milestone feature work — the default for roadmap implementation. `NN` is the milestone number. | `m06/leveled-compaction` |
+| `fix/` | Bug fix | `fix/wal-torn-tail` |
+| `perf/` | Optimisation (lands with a `Benchmark:` trailer) | `perf/skiplist-arena-offsets` |
+| `refactor/` | Behaviour-preserving restructure | `refactor/extract-block-builder` |
+| `docs/` | Documentation or Javadoc-only change | `docs/clarify-durability-rule` |
+| `adr/` | A decision record — `adr/NNNN-<slug>` | `adr/0007-compaction-strategy` |
+| `build/` | Gradle, toolchain, CI | `build/jmh-module` |
+| `spike/` | Throwaway experiment. Never merged; deleted or reopened as a real branch once the question is answered. | `spike/art-memtable` |
+
+The prefix matches the dominant commit `type` on the branch (§1). A branch whose
+commits span three unrelated types is probably three branches.
+
+### 5.2 Scope of a branch
+
+One logical change. If, mid-branch, you hit an unrelated bug or the urge to reformat,
+that is a *separate* branch — not a passenger on this one. One-branch-one-purpose is
+what keeps `git log`, `git bisect`, and code review legible.
+
+A branch anchored to hard-to-reverse work — an on-disk format, a public API, the key
+encoding, or the module graph — does **not** open with code. It opens with the ADR
+(`documentation/adr/`), and no implementation commit lands until that ADR is `Accepted`.
+
+### 5.3 Lifecycle
+
+1. Branch from an up-to-date `main`.
+2. Do the work as small, single-purpose commits (§3); each builds on its own.
+3. Stay current by **rebasing onto `main`**, never by merging `main` in — the history
+   must read linearly. Milestone branches may be long-lived; rebase them often.
+4. Integrate only when green: `./gradlew build` and `crashTest` pass on the branch tip.
+5. Delete the branch once it has landed. Stale branches are noise.
+
+Tag milestone completions on `main`: `m06-compaction`, and write a short release note
+in `documentation/roadmap/`. Those tags are the checkpoints you will demo from.
 
 ---
 
