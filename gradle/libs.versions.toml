@@ -1,0 +1,16 @@
+# Version catalog. Only test-scope and benchmark tooling appears here — shale-core has
+# zero runtime dependencies by rule (java-style.md §1). Adding a runtime library
+# requires an ADR.
+
+[versions]
+junit = "5.11.4"
+assertj = "3.27.3"
+jqwik = "1.9.2"
+jmh = "1.37"
+
+[libraries]
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+jqwik = { module = "net.jqwik:jqwik", version.ref = "jqwik" }

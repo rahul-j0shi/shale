@@ -2,13 +2,20 @@
 
 ## Setup
 
+The toolchain is vendored **inside the repo** under `.tools/` (gitignored) — no
+system-wide installs, and `rm -rf .tools` removes every trace.
+
 ```bash
 git clone <repo> && cd shale
 git config commit.template .gitmessage    # do this first
-./gradlew build
+./scripts/bootstrap.sh                     # fetch + verify JDK 25 into .tools/ (linux/x64)
+source scripts/env.sh                      # JAVA_HOME + GRADLE_USER_HOME → .tools/
+./gradlew build                            # first run also fetches Gradle into .tools/
 ```
 
-Requires JDK 25. No other local tooling — the Gradle wrapper brings its own.
+`source scripts/env.sh` is what makes `./gradlew` use the vendored JDK 25 and keep
+Gradle's distribution and caches in `.tools/gradle-home` instead of `~/.gradle`. Do it
+once per shell. No other local tooling is required.
 
 ## The loop
 

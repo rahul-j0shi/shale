@@ -1,3 +1,7 @@
+# In-repo toolchain (vendored JDK, Gradle distribution + caches). Installed by
+# scripts/bootstrap.sh; never committed — large, platform-specific, reproducible.
+.tools/
+
 # Gradle
 .gradle/
 build/
