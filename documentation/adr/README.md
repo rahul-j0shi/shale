@@ -37,7 +37,8 @@ next week, or anything already decided by an existing ADR.
 | 0001 | Record architecture decisions | Accepted | yes |
 | 0002 | Hand-write all core storage mechanisms | Accepted | no |
 | 0003 | Single repository, four Gradle modules | Accepted | yes |
-| 0004 | Internal key encoding | Proposed | **no** |
-| 0005 | Little-endian on-disk integers | Proposed | **no** |
+| 0004 | Internal key encoding | Accepted | **no** |
+| 0005 | Little-endian fixed-width integers | Accepted | **no** |
+| 0006 | Define the StorageBackend SPI | Accepted | **no** |
 
 Keep this table current in the same commit that adds the ADR.
