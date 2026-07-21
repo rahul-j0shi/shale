@@ -45,7 +45,8 @@ Conventional Commits, with project-specific scopes and trailers.
 Scopes mirror packages and modules, so `git log --grep 'compaction'` is useful:
 
 `wal`, `memtable`, `sstable`, `compaction`, `filter`, `manifest`, `iterator`, `cache`,
-`mvcc`, `recovery`, `api`, `bench`, `raft`, `region`, `rpc`, `pd`, `docs`, `build`.
+`mvcc`, `recovery`, `key`, `coding`, `api`, `bench`, `raft`, `region`, `rpc`, `pd`,
+`docs`, `build`.
 
 Use one scope. If a change genuinely spans three scopes it is probably three commits.
 
