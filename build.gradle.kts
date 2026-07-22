@@ -54,6 +54,16 @@ subprojects {
         options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
     }
 
+    // Forward `shale.*` system properties (e.g. -Dshale.test.seed) to the forked test JVM,
+    // so a failing seeded test can be reproduced from the command line (testing.md §2).
+    tasks.withType<Test>().configureEach {
+        System.getProperties().forEach { (key, value) ->
+            if (key.toString().startsWith("shale.")) {
+                systemProperty(key.toString(), value.toString())
+            }
+        }
+    }
+
     val testSources = extensions.getByType<SourceSetContainer>()
 
     // Fast unit tests: everything except the slow, tagged tiers.
