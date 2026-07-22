@@ -14,6 +14,9 @@ gradle-app.setting
 hs_err_pid*
 replay_pid*
 
+# jqwik failure-sample database (per-module test artifact)
+.jqwik-database
+
 # Engine artifacts / test scratch (never commit data files or WAL/SSTable output)
 *.wal
 *.sst
