@@ -27,61 +27,63 @@
   <!-- package-info.java required in every package. naming.md §3 -->
   <module name="JavadocPackage"/>
 
-  <!-- ================= banned APIs (java-style.md §7) ================= -->
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="System\.(out|err)\.print"/>
-    <property name="message"
-              value="Use the SLF4J logger, not System.out/err. See errors-and-logging.md §2."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="printStackTrace\(\)"/>
-    <property name="message"
-              value="Log through SLF4J or propagate. See errors-and-logging.md §1."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="Thread\.sleep\("/>
-    <property name="message"
-              value="No Thread.sleep, including in tests. Inject a Clock. See CLAUDE.md N8."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="new\s+Random\(\s*\)"/>
-    <property name="message"
-              value="Seed every Random and log the seed. See testing.md §2."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="System\.(currentTimeMillis|nanoTime)\(\)|Instant\.now\(\)"/>
-    <property name="message"
-              value="Take a java.time.Clock instead of reading the wall clock directly. See testing.md §2."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="@Disabled|@Ignore"/>
-    <property name="message"
-              value="Do not disable tests. Fix or delete. See CLAUDE.md N7."/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
-  <!-- Reminder that on-disk integers are always explicitly little-endian.
-       on-disk-formats.md §2. Downgraded to warning: legitimate in RPC code. -->
-  <module name="RegexpSinglelineJava">
-    <property name="format" value="ByteOrder\.(BIG_ENDIAN|nativeOrder)"/>
-    <property name="message"
-              value="On-disk formats are LITTLE_ENDIAN. Confirm this is wire/RPC code."/>
-    <property name="severity" value="warning"/>
-    <property name="ignoreComments" value="true"/>
-  </module>
-
   <module name="TreeWalker">
+
+    <!-- ================= banned APIs (java-style.md §7) =================
+         RegexpSinglelineJava is a TreeWalker check, so these live inside TreeWalker
+         (not at Checker level). They still apply to every Java source, tests included. -->
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="System\.(out|err)\.print"/>
+      <property name="message"
+                value="Use the SLF4J logger, not System.out/err. See errors-and-logging.md §2."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="printStackTrace\(\)"/>
+      <property name="message"
+                value="Log through SLF4J or propagate. See errors-and-logging.md §1."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="Thread\.sleep\("/>
+      <property name="message"
+                value="No Thread.sleep, including in tests. Inject a Clock. See CLAUDE.md N8."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="new\s+Random\(\s*\)"/>
+      <property name="message"
+                value="Seed every Random and log the seed. See testing.md §2."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="System\.(currentTimeMillis|nanoTime)\(\)|Instant\.now\(\)"/>
+      <property name="message"
+                value="Take a java.time.Clock instead of reading the wall clock directly. See testing.md §2."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="@Disabled|@Ignore"/>
+      <property name="message"
+                value="Do not disable tests. Fix or delete. See CLAUDE.md N7."/>
+      <property name="ignoreComments" value="true"/>
+    </module>
+
+    <!-- Reminder that on-disk integers are always explicitly little-endian.
+         on-disk-formats.md §2. Downgraded to warning: legitimate in RPC code. -->
+    <module name="RegexpSinglelineJava">
+      <property name="format" value="ByteOrder\.(BIG_ENDIAN|nativeOrder)"/>
+      <property name="message"
+                value="On-disk formats are LITTLE_ENDIAN. Confirm this is wire/RPC code."/>
+      <property name="severity" value="warning"/>
+      <property name="ignoreComments" value="true"/>
+    </module>
 
     <!-- ================= naming (naming.md) ================= -->
 
@@ -118,8 +120,10 @@
       <property name="ignoreComments" value="true"/>
     </module>
 
+    <!-- camelCase for production methods, plus the underscore_separated
+         scenario_condition_result form that testing.md §3 mandates for tests. -->
     <module name="MethodName">
-      <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+      <property name="format" value="^[a-z][a-zA-Z0-9]*(_[a-zA-Z0-9]+)*$"/>
     </module>
     <module name="MemberName"/>
     <module name="ParameterName"/>
@@ -238,8 +242,8 @@
 
     <module name="TodoComment">
       <property name="format" value="TODO(?!\([a-z]+, M\d+\):)"/>
-      <property name="message"
-                value="Format: TODO(owner, M6): reason. Bare TODOs are banned. commits.md §3."/>
+      <message key="todo.match"
+               value="Format: TODO(owner, M6): reason. Bare TODOs are banned. commits.md §3."/>
     </module>
 
     <!-- ================= suppression ================= -->
