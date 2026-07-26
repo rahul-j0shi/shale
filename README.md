@@ -11,9 +11,11 @@ first principles in Java, with no third-party library for any core mechanism.
 > that implements a core concept is disallowed by rule, even when it would be faster
 > and more correct. See [`CLAUDE.md`](CLAUDE.md) §4.
 
-**Status:** early scaffolding. Charter, conventions, and the M0–M11 roadmap are in
-place; engine implementation begins at M0. This repository is built strictly
-bottom-up — durability and crash-recovery correctness come before any optimisation.
+**Status:** **M0 complete** (tag `m0-skeleton`). The storage SPI, comparator, internal-key
+encoding, exception hierarchy, and the seeded `TreeMap` model harness are in the code;
+`./gradlew build` is green on JDK 25 (29 tests). Everything past M0 in the roadmap is not
+yet written. Built strictly bottom-up — durability and crash-recovery correctness come
+before any optimisation.
 
 ---
 
@@ -49,6 +51,128 @@ is the architectural point of the project.
 | `shale-bench` | JMH microbenchmarks + YCSB / db_bench-style macro harnesses. |
 | `flotilla-raft` | Consensus from scratch: election, log replication, snapshotting. |
 | `flotilla-server` | RPC, range sharding, split/merge, routing, placement/metadata. |
+
+## Architecture in depth — the code as it exists (M0)
+
+Strictly what is in the repository at tag `m0-skeleton` — nothing planned is drawn. Three
+views: the modules and their build gate, the `shale-core` type graph, and the one runnable
+flow (the model harness). The WAL, memtable, SSTable, compaction, Raft, and sharding layers
+in the [Roadmap](#roadmap) below **do not exist yet** — `shale-bench`, `flotilla-raft`, and
+`flotilla-server` are empty build shells.
+
+### 1 · Modules, dependency direction, and the build gate
+
+```mermaid
+flowchart TB
+  subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
+    core["shale-core<br/>17 main types · 11 test classes · 5 harness helpers<br/>JDK-only (zero runtime deps, N1)"]
+    bench["shale-bench<br/>build only — JMH wired, no source yet"]
+    raft["flotilla-raft<br/>build only — no source yet"]
+    server["flotilla-server<br/>build only — no source yet"]
+  end
+  server -->|implementation| raft
+  server -->|implementation| core
+  raft -->|api| core
+  bench -->|jmh| core
+  gate["Build gate (build.gradle.kts)<br/>spotless google-java-format · checkstyle · javac -Xlint:all -Werror<br/>tasks: test · crashTest · soakTest · catalog: junit · assertj · jqwik · jmh"]
+  gate -. enforces .-> core
+```
+
+`shale-core` depends on nothing but the JDK; the other three depend inward only — the arrows
+are enforced in each module's `build.gradle.kts`, not by convention.
+
+### 2 · `shale-core` type graph (all 17 types, real relationships)
+
+```mermaid
+flowchart TB
+  subgraph api["dev.shale — public API"]
+    sb["StorageBackend — interface<br/>put · delete · get · scan · comparator · close"]
+    cur["Cursor — interface · @NotThreadSafe<br/>isValid · next · key · value · close"]
+    dur["Durability — enum · @Immutable<br/>NONE · SYNC · GROUP"]
+    br["ByteRange — record · @Immutable<br/>(array, offset, length) · of()"]
+    kc["KeyComparator — interface<br/>compare(ByteRange,ByteRange) · name · compare(byte[],byte[])"]
+    bwc["BytewiseComparator — final class, singleton · @ThreadSafe<br/>INSTANCE · unsigned lexicographic"]
+    se["ShaleException — abstract class"]
+    ce["CorruptionException<br/>offsetBytes · expectedValue · actualValue"]
+    stx["StorageException"]
+    ese["EngineStateException"]
+  end
+
+  subgraph ann["dev.shale.internal.annotations"]
+    marks["@ThreadSafe · @NotThreadSafe · @Immutable"]
+  end
+  subgraph cod["dev.shale.internal.coding"]
+    le["LittleEndian — final class · @ThreadSafe<br/>putFixed64 · getFixed64"]
+  end
+  subgraph key["dev.shale.internal.key"]
+    vt["ValueType — enum · @Immutable<br/>DELETE=0x00 · PUT=0x01 · FOR_SEEK · fromCode"]
+    ikey["InternalKey — record · @Immutable<br/>userKey · sequenceNumber(56b) · valueType<br/>MAX_SEQUENCE · packTrailer · encode · decode"]
+    ikc["InternalKeyComparator — final class · @ThreadSafe<br/>userKey asc, trailer desc"]
+  end
+
+  ac["AutoCloseable (JDK)"]
+  rt["RuntimeException (JDK)"]
+
+  sb -->|extends| ac
+  cur -->|extends| ac
+  bwc -->|implements| kc
+  ikc -->|implements| kc
+  ce -->|extends| se
+  stx -->|extends| se
+  ese -->|extends| se
+  se -->|extends| rt
+
+  sb -.uses.-> dur
+  sb -.uses.-> cur
+  sb -.uses.-> kc
+  kc -.uses.-> br
+  ikey -.uses.-> le
+  ikey -.uses.-> vt
+  ikey -.uses.-> ce
+  ikc -.uses.-> br
+  ikc -.uses.-> le
+  vt -.uses.-> ce
+  ann -. "one marker per type" .-> api
+  ann -.-> cod
+  ann -.-> key
+```
+
+Per-type coverage (29 cases): `ByteRangeTest`, `BytewiseComparatorTest` + `…PropertyTest`,
+`CorruptionExceptionTest`, `LittleEndianPropertyTest`, `ValueTypeTest`, `InternalKeyTest` +
+`…PropertyTest`, `InternalKeyComparatorTest`.
+
+### 3 · The one executable flow — the model harness (`dev.shale.model`, test scope)
+
+```mermaid
+flowchart TB
+  seeds["Seeds.resolve()<br/>-Dshale.test.seed or SecureRandom"]
+  smt["StorageBackendModelTest · @Tag(model)<br/>5000 seeded ops: 70% put / 30% delete"]
+  rnd["java.util.Random(seed)"]
+  backs["Backends<br/>drain(Cursor) · assertMatches (AssertJ)"]
+  refb["ReferenceBackend implements StorageBackend<br/>TreeMap keyed by InternalKey.encode()<br/>ordered by InternalKeyComparator"]
+  refm["ReferenceModel — oracle<br/>TreeMap ordered by BytewiseComparator"]
+  ikstack["InternalKey · InternalKeyComparator · ValueType<br/>(encode/decode · ceilingEntry lookup · tombstones)"]
+  hst["HarnessSelfTest"]
+  buggy["BuggyBackend.ignoringDeletes()"]
+
+  seeds --> smt
+  smt --> rnd
+  smt -->|"put/delete (Durability.NONE)"| refb
+  smt -->|"same ops"| refm
+  smt -->|"after every 100 ops + final"| backs
+  backs -->|"get(probeKeys) + full scan"| refb
+  backs -->|compare| refm
+  refb -.uses.-> ikstack
+  hst -->|wraps| buggy
+  buggy -->|delegates puts, drops deletes| refb
+  hst -->|"assertMatches must throw"| backs
+```
+
+`ReferenceBackend` is the only thing that actually exercises the M0 encoding: it stores
+encoded `InternalKey`s in a `TreeMap` ordered by `InternalKeyComparator`, resolves a `get`
+via a `FOR_SEEK`/`MAX_SEQUENCE` ceiling lookup, and hides tombstones on `scan`. The oracle
+is a plain `TreeMap`; the harness asserts they never diverge, and `HarnessSelfTest` proves
+the assertion bites by running a backend that ignores deletes.
 
 ## Roadmap
 
