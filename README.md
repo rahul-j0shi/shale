@@ -52,36 +52,197 @@ is the architectural point of the project.
 | `flotilla-raft` | Consensus from scratch: election, log replication, snapshotting. |
 | `flotilla-server` | RPC, range sharding, split/merge, routing, placement/metadata. |
 
-## Architecture in depth — the code as it exists (M0)
+## Architecture — the complete project scope
 
-Strictly what is in the repository at tag `m0-skeleton` — nothing planned is drawn. Three
-views: the modules and their build gate, the `shale-core` type graph, and the one runnable
-flow (the model harness). The WAL, memtable, SSTable, compaction, Raft, and sharding layers
-in the [Roadmap](#roadmap) below **do not exist yet** — `shale-bench`, `flotilla-raft`, and
-`flotilla-server` are empty build shells.
+The whole system, built and planned, in one place. Every box is a component from the
+project's own inventory (`documentation/roadmap/shale-roadmap.md`) — nothing is invented.
+
+**Legend:** solid box / `✓` = in the code now (M0). Dashed box + `Mn` = defined in the
+[Roadmap](#roadmap) and built at milestone *Mn*. Today only `shale-core`'s M0 slice is
+written; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build shells.
 
 ### 1 · Modules, dependency direction, and the build gate
 
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core<br/>17 main types · 11 test classes · 5 harness helpers<br/>JDK-only (zero runtime deps, N1)"]
-    bench["shale-bench<br/>build only — JMH wired, no source yet"]
-    raft["flotilla-raft<br/>build only — no source yet"]
-    server["flotilla-server<br/>build only — no source yet"]
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0: SPI · encoding · harness ; M1-M8: WAL .. B+Tree"]:::part
+    bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
+    raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
+    server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
   end
   server -->|implementation| raft
   server -->|implementation| core
   raft -->|api| core
   bench -->|jmh| core
-  gate["Build gate (build.gradle.kts)<br/>spotless google-java-format · checkstyle · javac -Xlint:all -Werror<br/>tasks: test · crashTest · soakTest · catalog: junit · assertj · jqwik · jmh"]
+  gate["Build gate ✓ — spotless · checkstyle · javac -Werror<br/>tasks: test / crashTest / soakTest · deps: junit / assertj / jqwik / jmh"]:::done
   gate -. enforces .-> core
+
+  classDef done stroke:#2ea043,stroke-width:2px;
+  classDef part stroke:#2ea043,stroke-width:2px,stroke-dasharray:6 3;
+  classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
 ```
 
 `shale-core` depends on nothing but the JDK; the other three depend inward only — the arrows
-are enforced in each module's `build.gradle.kts`, not by convention.
+are enforced in each module's `build.gradle.kts`, not by convention. Only the M0 slice of
+`shale-core` exists today (dashed border); everything else is a shell awaiting its milestone.
 
-### 2 · `shale-core` type graph (all 17 types, real relationships)
+### 2 · Shale — the single-node engine (full component scope)
+
+Write path, on-disk format, background work, version/recovery, and read path — every
+component from the engine inventory. Only the cross-cutting substrate (SPI, key encoding,
+comparators, coding, exceptions) is built; the rest is milestone-tagged.
+
+```mermaid
+flowchart TB
+  client["client · put / delete / get / scan (Durability)"]:::done
+
+  subgraph xcut["Cross-cutting substrate"]
+    spi["StorageBackend · Cursor · Durability ✓ M0"]:::done
+    keyz["InternalKey · ValueType · SequenceNumber 56b ✓ M0<br/>KeyComparator · BytewiseComparator ✓ M0"]:::done
+    codez["LittleEndian ✓ M0 · varints M1"]:::done
+    obs["Metrics · Clock M1"]:::plan
+    errs["Corruption / Storage / EngineState exceptions ✓ M0"]:::done
+  end
+
+  subgraph wpath["Write path"]
+    wal["WAL M1<br/>WalSegment · len + CRC32C + type + payload<br/>group commit · fsync = DURABILITY point"]:::plan
+    mem["Memtable M2 · skiplist · arena"]:::plan
+    imm["Immutable Memtable(s) M2"]:::plan
+  end
+
+  subgraph bg["Background workers"]
+    flush["Flush M3"]:::plan
+    comp["Compaction M6<br/>leveled / tiered · scoring · file picking · subcompactions<br/>trivial move · write-stall backpressure · Tombstone + RangeTombstone GC"]:::plan
+  end
+
+  subgraph store["On disk · NNNNNN.sst"]
+    subgraph sstable["SSTable M3"]
+      ft["Footer · magic · FORMAT_VERSION"]:::plan
+      idx["IndexBlock · separator to BlockHandle"]:::plan
+      mi["MetaIndex"]:::plan
+      fb["FilterBlock · BloomFilter M7 (Monkey bits/level)"]:::plan
+      db["DataBlock · prefix-compressed · RestartPoint · CRC32C"]:::plan
+    end
+    lvl["Levels L0 .. Ln"]:::plan
+  end
+
+  subgraph vers["Version set & file lifecycle M5"]
+    edit["VersionEdit"]:::plan
+    man["Manifest log + CURRENT"]:::plan
+    ver["Version · live SSTable set · reference-counted (retain/release)"]:::plan
+  end
+
+  subgraph rpath["Read path"]
+    snap["Snapshot = SequenceNumber M7 · atomic WriteBatch M7"]:::plan
+    merge["Merge iterator M4 · min-heap<br/>reconcile newest-per-key · hide Tombstones"]:::plan
+    cache["Block cache · Table cache M7 · OS page cache"]:::plan
+  end
+
+  bpt["COW B+Tree backend M8 · 2nd StorageBackend (RUM comparison)"]:::plan
+
+  client --> spi
+  spi --> wal
+  wal --> mem
+  mem --> imm
+  imm --> flush
+  flush --> sstable
+  sstable --> lvl
+  ft --> idx
+  ft --> mi
+  idx --> db
+  mi --> fb
+  flush --> edit
+  comp --> edit
+  lvl <--> comp
+  edit --> man
+  man --> ver
+  spi --> snap
+  snap --> merge
+  mem --> merge
+  imm --> merge
+  ver --> merge
+  lvl --> merge
+  fb -. skip .-> merge
+  cache <--> merge
+  merge --> client
+  man -. recovery .-> ver
+  wal -. replay .-> mem
+  keyz -. encodes .-> wal
+  keyz -. encodes .-> db
+  spi -. alt backend .-> bpt
+
+  classDef done stroke:#2ea043,stroke-width:2px;
+  classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
+```
+
+### 3 · Flotilla — the distributed store (full component scope)
+
+The engine becomes the replicated state machine behind Raft; a router and placement driver
+shard the key space into Regions, each its own Raft group; Percolator adds distributed
+transactions. All planned (M9–M11); the state machine is the M0 engine.
+
+```mermaid
+flowchart TB
+  client["client"]:::plan
+  rpc["RPC M10 · gRPC + protobuf / HTTP2 · virtual threads"]:::plan
+  router["Router M10"]:::plan
+  pd["Placement Driver / metadata M10<br/>Store and Region registry · split / merge / rebalance · TSO (timestamp oracle)"]:::plan
+  fd["Failure detection M10 · heartbeats · phi-accrual / SWIM"]:::plan
+
+  subgraph region["Region = contiguous key range · one RaftGroup (multi-Raft) M10"]
+    raft["flotilla-raft M9<br/>leader election (RequestVote, Pre-Vote) · log replication (AppendEntries = heartbeat)<br/>safety · membership (joint consensus) · linearizable reads (ReadIndex / lease)"]:::plan
+    subgraph peer["Peer · leader"]
+      rlog["Raft log"]:::plan
+      sm["State machine = shale-core StorageBackend ✓ M0"]:::done
+    end
+    fol["Peer · followers (majority commits)"]:::plan
+  end
+
+  txn["Percolator distributed txn M11<br/>TSO startTS / commitTS · 2PC primary-key coordinator · lock / data / write columns"]:::plan
+
+  client --> rpc
+  rpc --> router
+  router -. locate region .-> pd
+  router --> peer
+  raft --- peer
+  rlog -->|AppendEntries| fol
+  fol -->|ack| rlog
+  rlog -->|commit on majority| sm
+  peer -. "InstallSnapshot = engine Snapshot" .-> fol
+  pd -->|timestamps| txn
+  txn --> router
+  pd -. "rebalance / split / merge" .-> region
+  fd -. suspect .-> region
+
+  classDef done stroke:#2ea043,stroke-width:2px;
+  classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
+```
+
+### 4 · Verification & benchmarking (full scope)
+
+```mermaid
+flowchart LR
+  subgraph tiers["Test tiers (testing.md)"]
+    unit["Unit ✓ M0"]:::done
+    modelt["Model vs TreeMap ✓ M0"]:::done
+    prop["Property · jqwik ✓ M0"]:::done
+    crash["Crash · FaultyFileSystem M5"]:::plan
+    soak["Soak M6+"]:::plan
+    dst["Deterministic simulation · seeded M9"]:::plan
+    fuzz["Fuzzing · WAL/SSTable parsers M3+"]:::plan
+    jep["Jepsen linearizability M9+"]:::plan
+  end
+  bench["Benchmarks · shale-bench<br/>JMH ✓ wired · YCSB A-F · db_bench (fillseq/fillrandom/readrandom/seekrandom) M8<br/>RUM: LSM vs COW B+Tree M8"]:::plan
+  target["Shale engine + Flotilla cluster"]
+  tiers --> target
+  bench --> target
+
+  classDef done stroke:#2ea043,stroke-width:2px;
+  classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
+```
+
+### 5 · Built today (M0) — the `shale-core` type graph (all 17 types)
 
 ```mermaid
 flowchart TB
@@ -141,7 +302,7 @@ Per-type coverage (29 cases): `ByteRangeTest`, `BytewiseComparatorTest` + `…Pr
 `CorruptionExceptionTest`, `LittleEndianPropertyTest`, `ValueTypeTest`, `InternalKeyTest` +
 `…PropertyTest`, `InternalKeyComparatorTest`.
 
-### 3 · The one executable flow — the model harness (`dev.shale.model`, test scope)
+### 6 · Built today (M0) — the model harness (`dev.shale.model`)
 
 ```mermaid
 flowchart TB
