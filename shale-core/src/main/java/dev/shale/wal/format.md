@@ -71,14 +71,14 @@ File bytes:
 4C 41 57 65 6C 61 68 53   magic  (0x5368616C6557414C, LE)
 01 00 00 00               FORMAT_VERSION = 1
 00 00 00 00               reserved
-cc cc cc cc               crc32c(type ‖ payload)   [pinned by the golden file]
+F3 27 F3 CC               crc32c(type ‖ payload)   [pinned by the golden file]
 0E 00                     length = 14
 01                        type = FULL
 0B 6B 65 79 01 01 00 00   payload ...
 00 00 00 01 76
 ```
 
-The exact CRC bytes are fixed by the committed golden file
+The CRC bytes above are fixed by the committed golden file
 `shale-core/src/test/resources/golden/wal/v1/single-put.wal` and its `.json` sibling; the
 golden test decodes it and asserts the logical contents, and a bit-flip-at-every-offset test
 asserts every corruption is detected (`on-disk-formats.md` §3, §4).

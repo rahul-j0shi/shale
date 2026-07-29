@@ -1,0 +1,14 @@
+{
+  "format": "wal",
+  "formatVersion": 1,
+  "description": "A single WAL segment containing one PUT, matching format.md §5.",
+  "records": [
+    {
+      "type": "FULL",
+      "userKey": "key",
+      "sequenceNumber": 1,
+      "valueType": "PUT",
+      "value": "v"
+    }
+  ]
+}
