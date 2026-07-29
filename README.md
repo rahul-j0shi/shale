@@ -11,11 +11,13 @@ first principles in Java, with no third-party library for any core mechanism.
 > that implements a core concept is disallowed by rule, even when it would be faster
 > and more correct. See [`CLAUDE.md`](CLAUDE.md) §4.
 
-**Status:** **M0 complete** (tag `m0-skeleton`). The storage SPI, comparator, internal-key
-encoding, exception hierarchy, and the seeded `TreeMap` model harness are in the code;
-`./gradlew build` is green on JDK 25 (29 tests). Everything past M0 in the roadmap is not
-yet written. Built strictly bottom-up — durability and crash-recovery correctness come
-before any optimisation.
+**Status:** **M1 complete** (tag `m1-wal`). The engine is **durable**: a LevelDB
+block-structured WAL logs every mutation before an in-memory map, and reopening replays it —
+proven by a crash test that truncates the log at every byte offset and always recovers a
+clean prefix. `./gradlew build` + `crashTest` are green on JDK 25 (61 tests + crash suite).
+M0 shipped the SPI, comparator, and internal-key encoding; M2+ of the roadmap is not yet
+written. Built strictly bottom-up — durability and crash-recovery correctness before any
+optimisation.
 
 ---
 
@@ -66,7 +68,7 @@ written; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build s
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0: SPI · encoding · harness ; M1-M8: WAL .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M1: SPI · encoding · WAL · durable engine ; M2-M8: skiplist .. B+Tree"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
     server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
@@ -100,14 +102,14 @@ flowchart TB
   subgraph xcut["Cross-cutting substrate"]
     spi["StorageBackend · Cursor · Durability ✓ M0"]:::done
     keyz["InternalKey · ValueType · SequenceNumber 56b ✓ M0<br/>KeyComparator · BytewiseComparator ✓ M0"]:::done
-    codez["LittleEndian ✓ M0 · varints M1"]:::done
-    obs["Metrics · Clock M1"]:::plan
+    codez["LittleEndian ✓ M0 · varints ✓ M1"]:::done
+    obs["Metrics · Clock ✓ M1"]:::done
     errs["Corruption / Storage / EngineState exceptions ✓ M0"]:::done
   end
 
   subgraph wpath["Write path"]
-    wal["WAL M1<br/>WalSegment · len + CRC32C + type + payload<br/>group commit · fsync = DURABILITY point"]:::plan
-    mem["Memtable M2 · skiplist · arena"]:::plan
+    wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · group-commit batching M2+"]:::done
+    mem["Memtable ✓ M1 seam (TreeMap) · skiplist + arena M2"]:::done
     imm["Immutable Memtable(s) M2"]:::plan
   end
 
