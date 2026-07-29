@@ -31,4 +31,20 @@ class LittleEndianPropertyTest {
 
     assertThat(LittleEndian.getFixed64(buf, 5)).isEqualTo(value);
   }
+
+  @Property
+  void putThenGet32_roundTrips(@ForAll int value) {
+    byte[] buf = new byte[4];
+    LittleEndian.putFixed32(buf, 0, value);
+
+    assertThat(LittleEndian.getFixed32(buf, 0)).isEqualTo(value);
+  }
+
+  @Test
+  void putFixed32_writesLeastSignificantByteFirst() {
+    byte[] buf = new byte[4];
+    LittleEndian.putFixed32(buf, 0, 0x01020304);
+
+    assertThat(buf).containsExactly(0x04, 0x03, 0x02, 0x01);
+  }
 }

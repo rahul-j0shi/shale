@@ -35,4 +35,21 @@ public final class LittleEndian {
     }
     return value;
   }
+
+  /** Writes {@code value} as 4 little-endian bytes at {@code dst[offset..offset+3]}. */
+  public static void putFixed32(byte[] dst, int offset, int value) {
+    dst[offset] = (byte) value;
+    dst[offset + 1] = (byte) (value >>> 8);
+    dst[offset + 2] = (byte) (value >>> 16);
+    dst[offset + 3] = (byte) (value >>> 24);
+  }
+
+  /** Reads 4 little-endian bytes at {@code src[offset..offset+3]} as an int. */
+  public static int getFixed32(byte[] src, int offset) {
+    int value = 0;
+    for (int i = 3; i >= 0; i--) {
+      value = (value << 8) | (src[offset + i] & 0xFF);
+    }
+    return value;
+  }
 }
