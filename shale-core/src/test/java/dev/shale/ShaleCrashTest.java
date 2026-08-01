@@ -40,7 +40,9 @@ class ShaleCrashTest {
     for (int length = 16; length <= full.length; length++) {
       List<String> recovered = recoverFromPrefix(full, length);
 
-      // recovered is exactly some prefix of the writes — never a wrong key, never out of order.
+      // recovered is exactly some prefix of the writes: no extra records, and the ones present
+      // match the corresponding writes in order (never a wrong key, never out of order).
+      assertThat(recovered).hasSizeLessThanOrEqualTo(written.size());
       assertThat(recovered).isEqualTo(written.subList(0, recovered.size()));
     }
   }
