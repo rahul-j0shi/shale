@@ -36,6 +36,12 @@ import java.util.stream.Stream;
 @ThreadSafe
 public final class Shale implements StorageBackend {
 
+  /**
+   * Default memtable size that triggers a switch: 4 MiB, matching LevelDB's {@code
+   * write_buffer_size}.
+   */
+  public static final long DEFAULT_WRITE_BUFFER_SIZE_BYTES = 4L * 1024 * 1024;
+
   private static final Pattern SEGMENT_NAME = Pattern.compile("\\d{6}\\.wal");
   private static final byte[] NO_VALUE = new byte[0];
 
@@ -48,7 +54,16 @@ public final class Shale implements StorageBackend {
   private final Object writeLock = new Object();
   private final KeyComparator userComparator;
   private final InternalKeyComparator ordering;
-  private final WalWriter wal;
+  private final Path directory;
+  private final Clock clock;
+  private final Metrics metrics;
+  private final long writeBufferSizeBytes;
+
+  /** The active WAL segment writer; rolled on a memtable switch. @GuardedBy("writeLock") */
+  private WalWriter wal;
+
+  /** Number of the next WAL segment to open on a switch. @GuardedBy("writeLock") */
+  private int nextSegmentNumber;
 
   /** The live memtable set. Volatile: one read publishes a consistent snapshot to a reader. */
   private volatile MemtableSet memtables;
@@ -56,16 +71,46 @@ public final class Shale implements StorageBackend {
   /** Next sequence number to stamp. @GuardedBy("writeLock") */
   private long nextSequence;
 
-  private Shale(KeyComparator userComparator, WalWriter wal, Memtable active, long nextSequence) {
+  private Shale(
+      Path directory,
+      Clock clock,
+      Metrics metrics,
+      long writeBufferSizeBytes,
+      KeyComparator userComparator,
+      WalWriter wal,
+      Memtable active,
+      long nextSequence,
+      int currentSegmentNumber) {
+    this.directory = directory;
+    this.clock = clock;
+    this.metrics = metrics;
+    this.writeBufferSizeBytes = writeBufferSizeBytes;
     this.userComparator = userComparator;
     this.ordering = new InternalKeyComparator(userComparator);
     this.wal = wal;
     this.memtables = new MemtableSet(active, List.of());
     this.nextSequence = nextSequence;
+    this.nextSegmentNumber = currentSegmentNumber + 1;
   }
 
-  /** Opens (or recovers) an engine rooted at {@code directory}, replaying any WAL segments. */
+  /**
+   * Opens (or recovers) an engine rooted at {@code directory} with the default write-buffer size,
+   * replaying any WAL segments.
+   */
   public static Shale open(Path directory, Clock clock, Metrics metrics) throws IOException {
+    return open(directory, clock, metrics, DEFAULT_WRITE_BUFFER_SIZE_BYTES);
+  }
+
+  /**
+   * Opens (or recovers) an engine, switching the active memtable once it reaches {@code
+   * writeBufferSizeBytes}. Recovery replays every present segment in order into one memtable; the
+   * runtime active/immutable split is rebuilt as writes cross the threshold again.
+   */
+  public static Shale open(Path directory, Clock clock, Metrics metrics, long writeBufferSizeBytes)
+      throws IOException {
+    if (writeBufferSizeBytes <= 0) {
+      throw new IllegalArgumentException("writeBufferSizeBytes must be positive");
+    }
     Files.createDirectories(directory);
     KeyComparator comparator = BytewiseComparator.INSTANCE;
     Memtable active = new SkiplistMemtable(comparator, SKIPLIST_SEED);
@@ -80,9 +125,18 @@ public final class Shale implements StorageBackend {
       }
     }
 
-    int nextNumber = segments.isEmpty() ? 1 : numberOf(segments.getLast()) + 1;
-    WalWriter wal = WalWriter.open(directory.resolve(segmentName(nextNumber)), clock, metrics);
-    return new Shale(comparator, wal, active, maxSequence + 1);
+    int currentNumber = segments.isEmpty() ? 1 : numberOf(segments.getLast()) + 1;
+    WalWriter wal = WalWriter.open(directory.resolve(segmentName(currentNumber)), clock, metrics);
+    return new Shale(
+        directory,
+        clock,
+        metrics,
+        writeBufferSizeBytes,
+        comparator,
+        wal,
+        active,
+        maxSequence + 1,
+        currentNumber);
   }
 
   @Override
@@ -106,10 +160,37 @@ public final class Shale implements StorageBackend {
   private void append(InternalKey key, byte[] value, Durability durability) {
     try {
       wal.append(WalRecordCodec.encode(key, value), durability); // D3: WAL durable before memtable
+      Memtable active = memtables.active();
+      active.add(key.encode(), value);
+      metrics.gauge("memtable.size.bytes", active.sizeBytes());
+      metrics.gauge("memtable.immutable.count", memtables.immutablesNewestFirst().size());
+      if (active.sizeBytes() >= writeBufferSizeBytes) {
+        switchMemtable();
+      }
     } catch (IOException e) {
       throw new StorageException("WAL append failed", e);
     }
-    memtables.active().add(key.encode(), value);
+  }
+
+  /**
+   * Freezes the full active memtable into the immutable list and starts a fresh one on a new WAL
+   * segment. @GuardedBy("writeLock"), reached only from {@link #append}. The old segment stays on
+   * disk — fully durable — for recovery until its memtable is flushed to an SSTable (M3).
+   */
+  private void switchMemtable() throws IOException {
+    wal.close();
+    WalWriter rolled =
+        WalWriter.open(directory.resolve(segmentName(nextSegmentNumber++)), clock, metrics);
+    Memtable newActive = new SkiplistMemtable(userComparator, SKIPLIST_SEED);
+
+    MemtableSet current = memtables;
+    List<Memtable> immutables = new ArrayList<>(current.immutablesNewestFirst().size() + 1);
+    immutables.add(current.active()); // the memtable we just froze is now the newest immutable
+    immutables.addAll(current.immutablesNewestFirst());
+
+    wal = rolled;
+    memtables = new MemtableSet(newActive, List.copyOf(immutables)); // publish atomically
+    metrics.increment("memtable.switch.count", 1);
   }
 
   @Override
