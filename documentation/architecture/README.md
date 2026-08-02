@@ -12,6 +12,7 @@ describes intent) these track what is really implemented, and they change as the
 |---|---|---|
 | M0 | [m0-shale-core.md](m0-shale-core.md) | `shale-core` type graph (all 17 types) and the model harness |
 | M1 | [m1-wal-and-map.md](m1-wal-and-map.md) | WAL write path, block-fragment layout, the recovery state machine, durability, and the read path |
+| M2 | [m2-memtable-and-handoff.md](m2-memtable-and-handoff.md) | Skiplist structure, single-writer/lock-free-reader safe publication, the memtable switch and WAL roll, cross-memtable reads, and recovery |
 
 Each milestone's release note lives under [`../roadmap/`](../roadmap/); the decisions behind
 these shapes are in [`../adr/`](../adr/).

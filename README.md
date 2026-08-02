@@ -11,13 +11,17 @@ first principles in Java, with no third-party library for any core mechanism.
 > that implements a core concept is disallowed by rule, even when it would be faster
 > and more correct. See [`CLAUDE.md`](CLAUDE.md) §4.
 
-**Status:** **M1 complete** (tag `m1-wal`). The engine is **durable**: a LevelDB
-block-structured WAL logs every mutation before an in-memory map, and reopening replays it —
-proven by a crash test that truncates the log at every byte offset and always recovers a
-clean prefix. `./gradlew build` + `crashTest` are green on JDK 25 (61 tests + crash suite).
-M0 shipped the SPI, comparator, and internal-key encoding; M2+ of the roadmap is not yet
-written. Built strictly bottom-up — durability and crash-recovery correctness before any
-optimisation.
+**Status:** **M2 complete** (tag `m2-skiplist`). The memtable is now a **hand-written
+lock-free skiplist** (one serialised writer, lock-free readers), so **reads no longer block
+writes**; when it fills, the engine freezes it into an immutable memtable, rolls a new WAL
+segment, and publishes the new set with a single volatile write. Underneath, the engine is
+**durable**: a LevelDB block-structured WAL logs every mutation before the memtable, proven by
+a crash test that truncates the log at every byte offset and always recovers a clean prefix.
+`./gradlew build` + `crashTest` are green on JDK 25 (77 test cases across unit, property,
+model, concurrency, and crash tiers). M0 shipped the SPI, comparator, and internal-key
+encoding; M1 durability; M3+ of the roadmap is not yet written. Built strictly bottom-up —
+correctness before any optimisation (the skiplist is on-heap; the arena is a later,
+benchmark-gated change).
 
 ---
 
@@ -68,7 +72,7 @@ written; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build s
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M1: SPI · encoding · WAL · durable engine ; M2-M8: skiplist .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M2: SPI · encoding · WAL · durable engine · lock-free skiplist ; M3-M8: SSTable .. B+Tree"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
     server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
@@ -109,8 +113,8 @@ flowchart TB
 
   subgraph wpath["Write path"]
     wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · group-commit batching M2+"]:::done
-    mem["Memtable ✓ M1 seam (TreeMap) · skiplist + arena M2"]:::done
-    imm["Immutable Memtable(s) M2"]:::plan
+    mem["Memtable ✓ M2 lock-free skiplist (arena later)"]:::done
+    imm["Immutable Memtable(s) ✓ M2 switch (flush M3)"]:::done
   end
 
   subgraph bg["Background workers"]

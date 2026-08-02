@@ -42,5 +42,6 @@ next week, or anything already decided by an existing ADR.
 | 0006 | Define the StorageBackend SPI | Accepted | **no** |
 | 0007 | Block-structured log format for the WAL | Accepted | **no** |
 | 0008 | Durability modes, group commit, and an injected clock | Accepted | partly |
+| 0009 | Skiplist memtable: single writer, lock-free readers, on-heap | Accepted | partly |
 
 Keep this table current in the same commit that adds the ADR.

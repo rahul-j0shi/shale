@@ -15,6 +15,8 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 |---|---|---|
 | `SSTable` | `SsTable`, `SSTABLE`, `Table`, `Segment` | Immutable sorted on-disk table |
 | `Memtable` | `MemTable`, `memTable`, `MemoryTable` | Mutable in-memory sorted buffer |
+| immutable memtable | `sealed`/`rotated`/`frozen table` | A memtable no longer written to, awaiting flush |
+| memtable switch | `rotate`, `seal`, `roll` (the memtable) | Freezing the active memtable and starting a new one |
 | `Wal` (in identifiers) | `WAL` in identifiers, `Journal`, `Log` alone | Write-ahead log |
 | `WalSegment` | `LogFile`, `LogChunk` | One rolled WAL file |
 | `Manifest` | `Metadata`, `Catalog` | The log of version edits |
