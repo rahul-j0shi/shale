@@ -1,8 +1,8 @@
 /**
  * The memtable: the mutable in-memory buffer that receives writes after the WAL. The engine's
- * memtable is {@link dev.shale.memtable.SkiplistMemtable}, a hand-written skiplist behind the {@link
- * dev.shale.memtable.Memtable} seam; {@link dev.shale.memtable.TreeMemtable} is retained as the
- * differential-test oracle.
+ * memtable is {@link dev.shale.memtable.SkiplistMemtable}, a hand-written skiplist behind the
+ * {@link dev.shale.memtable.Memtable} seam; {@link dev.shale.memtable.TreeMemtable} is retained as
+ * the differential-test oracle.
  *
  * <p><b>Threading:</b> {@code SkiplistMemtable} is {@code @ThreadSafe} under a single-writer /
  * lock-free-reader contract (ADR-0009) — the engine serialises inserts on its write lock, while any
