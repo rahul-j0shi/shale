@@ -23,7 +23,7 @@ class ShaleMemtableSwitchTest {
   @TempDir private Path dir;
 
   @Test
-  void writingPastBuffer_triggersSwitchesAndRollsSegments() throws IOException {
+  void writingPastBuffer_triggersSwitches() throws IOException {
     RecordingMetrics metrics = new RecordingMetrics();
     try (Shale db = open(metrics)) {
       for (int i = 0; i < 200; i++) {
@@ -31,8 +31,10 @@ class ShaleMemtableSwitchTest {
       }
       assertThat(metrics.counter("memtable.switch.count")).isGreaterThan(0);
     }
-    // Each switch rolls a new segment, so more than one WAL file exists on disk.
-    assertThat(walSegments()).hasSizeGreaterThan(1);
+    // At M3 each switch flushes to an SSTable and reclaims the frozen segment; only the active
+    // segment remains, and tables exist on disk. (Segment-count detail is covered in
+    // ShaleFlushTest.)
+    assertThat(walSegments()).isNotEmpty();
   }
 
   @Test
