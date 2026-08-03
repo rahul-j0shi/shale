@@ -144,6 +144,11 @@ synonyms; do not use two names for one thing.
 `package-info.java` and any `format.md`. Before changing behaviour, read the relevant
 milestone in `documentation/roadmap/`.
 
+**Document as you build.** The codebase must read like a book: explain *why*, not just
+*what*, on the surface that owns it, in the same commit as the code. The rules — and the
+per-milestone checklist — are `documentation/conventions/documentation.md`. This is a study
+project; the explanation is part of the deliverable, not an afterthought.
+
 **Stay inside the milestone.** The roadmap is strictly ordered and each milestone must
 end in a working, tested artifact. Do not implement compaction while the SSTable format
 is unfinished, do not add bloom filters before compaction works, do not stub the
@@ -188,5 +193,9 @@ wrong guess in these areas is expensive to unwind. Propose an ADR and stop.
 | Byte layouts, versioning, compatibility | `documentation/conventions/on-disk-formats.md` |
 | Exceptions, logging, metrics | `documentation/conventions/errors-and-logging.md` |
 | Test tiers, naming, determinism | `documentation/conventions/testing.md` |
+| Documentation, readability, diagrams | `documentation/conventions/documentation.md` |
 | Decision records | `documentation/adr/README.md` |
 | Milestones and scope | `documentation/roadmap/` |
+
+Lost? [`documentation/README.md`](documentation/README.md) is the map of every doc and the
+order to read them in.
