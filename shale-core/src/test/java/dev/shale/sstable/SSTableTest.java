@@ -62,6 +62,50 @@ class SSTableTest {
   }
 
   @Test
+  void flippingAnyByte_isDetectedOrHarmless() throws IOException {
+    // A small table so bit-flip-at-every-offset is cheap (on-disk-formats.md §3).
+    Path path = dir.resolve("small.sst");
+    try (SSTableWriter writer = SSTableWriter.open(path)) {
+      for (int i = 0; i < 5; i++) {
+        writer.add(new InternalKey(userKey(i), i + 1, ValueType.PUT).encode(), value(i));
+      }
+      writer.finish();
+    }
+    byte[] original = Files.readAllBytes(path);
+    List<String> expected = fullyRead(path);
+
+    Path victim = dir.resolve("victim.sst");
+    for (int offset = 0; offset < original.length; offset++) {
+      byte[] flipped = original.clone();
+      flipped[offset] ^= (byte) 0xFF; // corrupt one byte
+      Files.write(victim, flipped);
+      try {
+        assertThat(fullyRead(victim))
+            .as("flip at offset %d must not silently change the data", offset)
+            .isEqualTo(expected); // no exception → must be byte-identical (harmless)
+      } catch (CorruptionException detected) {
+        // detected — the acceptable outcome (N4)
+      }
+    }
+  }
+
+  /** Opens the table, drains every entry, and probes a ceiling — reading all blocks (and CRCs). */
+  private static List<String> fullyRead(Path path) throws IOException {
+    SSTableReader reader = SSTableReader.open(path, ORDERING);
+    try {
+      List<String> rows = new ArrayList<>();
+      for (SSTableReader.Entry entry : reader.entries()) {
+        rows.add(HexFormat.of().formatHex(entry.internalKey()));
+      }
+      SSTableReader.Entry ceiling = reader.ceiling(seek(userKey(0)));
+      rows.add(ceiling == null ? "null" : HexFormat.of().formatHex(ceiling.value()));
+      return rows;
+    } finally {
+      reader.release();
+    }
+  }
+
+  @Test
   void corruptedFooterMagic_isCorruption() throws IOException {
     Path path = dir.resolve("000002.sst");
     writeTable(path);

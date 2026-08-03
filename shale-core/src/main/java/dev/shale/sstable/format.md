@@ -99,31 +99,46 @@ Padding bytes are written zero and verified zero on read (on-disk-formats.md §2
 
 ## 7. Worked example
 
-A one-data-block table with two puts: `("a", "1", seq 1)` and `("b", "22", seq 2)`. Internal keys
-are `61 0101000000000000` and `62 0201000000000000` (`userKey ‖ fixed64LE((seq<<8)|PUT)`), 9 bytes
-each. Both are restart points is *false* — only the first is a restart (interval 16), so entry 1
-shares the 0-length prefix (the user keys `a`/`b` differ at byte 0):
+The committed golden file `two-puts.sst` (132 bytes) — two puts, `("a", "1", seq 1)` and
+`("b", "22", seq 2)`. Internal keys are `61 ‖ 0101000000000000` and `62 ‖ 0102000000000000`
+(`userKey ‖ fixed64LE((seq<<8)|PUT)`), 9 bytes each. Only the first entry of each block is a restart
+(interval 16), and the user keys `a`/`b` differ at byte 0, so entry 1 shares a 0-length prefix.
 
 ```
-data block content:
+DATA BLOCK  content [0, 35), handle {offset 0, size 35}
   entry 0 (restart):  00 09 01  61 01 01 00 00 00 00 00 00  31
-                      │  │  │   └ internalKey "a"…          └ value "1"
+                      │  │  │   └ internalKey "a" (seq 1)    └ value "1"
                       │  │  └ value_len = 1
                       │  └ non_shared = 9
                       └ shared = 0
-  entry 1:            00 09 02  62 02 01 00 00 00 00 00 00  32 32
-                      shared=0 non_shared=9 value_len=2 key "b"… value "22"
+  entry 1:            00 09 02  62 01 02 00 00 00 00 00 00  32 32
+                      shared=0 non_shared=9 value_len=2  internalKey "b" (seq 2)  value "22"
   restarts:           00 00 00 00           restart[0] = offset 0
   num_restarts:       01 00 00 00           R = 1
-data block trailer:   00  <crc32c LE>       type=none, crc over content ‖ type
+  trailer:            00  49 a6 2d a2        type=none, crc32c over content ‖ type   [golden-pinned]
+
+METAINDEX BLOCK  content [40, 48), handle {offset 40, size 8}  — empty
+  restarts+count:     00 00 00 00  01 00 00 00
+  trailer:            00  0f 07 f4 83
+
+INDEX BLOCK  content [53, 75), handle {offset 53, size 22}
+  entry 0 (restart):  00 09 02  62 01 02 00 00 00 00 00 00  00 23
+                      key = data block's last key "b"        value = BlockHandle{offset 0, size 0x23}
+  restarts+count:     00 00 00 00  01 00 00 00
+  trailer:            00  02 e8 4f 44
+
+FOOTER  [80, 132), 52 bytes
+  metaindex handle:   28 08                 {offset 40, size 8}
+  index handle:       35 16                 {offset 53, size 22}
+  padding:            00 … 00               zero to offset 40
+  FORMAT_VERSION:     01 00 00 00           = 1
+  magic:              54 53 53 65 6c 61 68 53   0x5368616C65535354 ("ShaleSST")
 ```
 
-The exact block CRCs and byte offsets are pinned by the committed golden file
+The CRCs and offsets above are pinned by the committed golden file
 `shale-core/src/test/resources/golden/sstable/v1/two-puts.sst` and its `.json` sibling; the golden
 test decodes it and asserts the logical contents, and a bit-flip-at-every-offset test asserts every
-corruption is detected (on-disk-formats.md §3, §4).
-
-<!-- GOLDEN-CRCS: pinned when the golden fixture is birthed; see two-puts.sst.json -->
+corruption is detected or provably harmless (on-disk-formats.md §3, §4).
 
 ## 8. Rationale
 
