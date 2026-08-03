@@ -26,6 +26,11 @@ CURRENT
 data/
 /tmp-test/
 
+# Exception: golden fixtures are committed on purpose (on-disk-formats.md §4). The blanket
+# rules above would otherwise silently drop them, and a golden that is not in the repo cannot
+# catch a format change on a clean clone.
+!shale-core/src/test/resources/golden/**
+
 # IDE
 .idea/
 *.iml

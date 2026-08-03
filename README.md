@@ -11,17 +11,19 @@ first principles in Java, with no third-party library for any core mechanism.
 > that implements a core concept is disallowed by rule, even when it would be faster
 > and more correct. See [`CLAUDE.md`](CLAUDE.md) §4.
 
-**Status:** **M2 complete** (tag `m2-skiplist`). The memtable is now a **hand-written
-lock-free skiplist** (one serialised writer, lock-free readers), so **reads no longer block
-writes**; when it fills, the engine freezes it into an immutable memtable, rolls a new WAL
-segment, and publishes the new set with a single volatile write. Underneath, the engine is
-**durable**: a LevelDB block-structured WAL logs every mutation before the memtable, proven by
-a crash test that truncates the log at every byte offset and always recovers a clean prefix.
-`./gradlew build` + `crashTest` are green on JDK 25 (77 test cases across unit, property,
-model, concurrency, and crash tiers). M0 shipped the SPI, comparator, and internal-key
-encoding; M1 durability; M3+ of the roadmap is not yet written. Built strictly bottom-up —
-correctness before any optimisation (the skiplist is on-heap; the arena is a later,
-benchmark-gated change).
+**Status:** **M3 complete** (tag `m3-sstable`). The engine now **flushes** a full memtable to a
+**hand-written SSTable** — a LevelDB block table (prefix-compressed blocks + restart points,
+last-key index, versioned footer, per-block CRC32C) — and reclaims the WAL segment once the
+table is durable (fsync + atomic rename **before** the log is dropped). Reads span the
+lock-free-skiplist memtable set and the on-disk tables, newest first; recovery replays the log
+into a table and resets it. The whole engine stays **durable and crash-consistent**: a crash
+test truncates the WAL at every offset and always recovers a clean prefix, a frozen golden
+SSTable guards against format drift, and a bit-flip-at-every-offset test proves every
+corruption is detected. `./gradlew build` + `crashTest` are green on JDK 25 (98 test cases
+across unit, property, model, concurrency, and crash tiers). M0 shipped the SPI/encoding, M1
+durability, M2 the lock-free skiplist; M4+ (merge iterator, manifest, compaction) is not yet
+written. Built strictly bottom-up — correctness before any optimisation (flush is synchronous;
+blocks are uncompressed; both are deliberately deferred, benchmark-gated changes).
 
 ---
 
@@ -72,7 +74,7 @@ written; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build s
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M2: SPI · encoding · WAL · durable engine · lock-free skiplist ; M3-M8: SSTable .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M3: SPI · encoding · WAL · skiplist · SSTable + flush ; M4-M8: merge · manifest · compaction .. B+Tree"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
     server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
@@ -114,21 +116,21 @@ flowchart TB
   subgraph wpath["Write path"]
     wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · group-commit batching M2+"]:::done
     mem["Memtable ✓ M2 lock-free skiplist (arena later)"]:::done
-    imm["Immutable Memtable(s) ✓ M2 switch (flush M3)"]:::done
+    imm["Immutable Memtable(s) ✓ M2 switch · ✓ M3 flush drains to SSTable"]:::done
   end
 
   subgraph bg["Background workers"]
-    flush["Flush M3"]:::plan
+    flush["Flush ✓ M3 · memtable → SSTable · fsync+rename before WAL delete (D3) · synchronous (bg thread M6)"]:::done
     comp["Compaction M6<br/>leveled / tiered · scoring · file picking · subcompactions<br/>trivial move · write-stall backpressure · Tombstone + RangeTombstone GC"]:::plan
   end
 
   subgraph store["On disk · NNNNNN.sst"]
-    subgraph sstable["SSTable M3"]
-      ft["Footer · magic · FORMAT_VERSION"]:::plan
-      idx["IndexBlock · separator to BlockHandle"]:::plan
-      mi["MetaIndex"]:::plan
+    subgraph sstable["SSTable ✓ M3"]
+      ft["Footer ✓ M3 · magic · FORMAT_VERSION"]:::done
+      idx["IndexBlock ✓ M3 · last key to BlockHandle"]:::done
+      mi["MetaIndex ✓ M3 (empty; filter handle M7)"]:::done
       fb["FilterBlock · BloomFilter M7 (Monkey bits/level)"]:::plan
-      db["DataBlock · prefix-compressed · RestartPoint · CRC32C"]:::plan
+      db["DataBlock ✓ M3 · prefix-compressed · RestartPoint · CRC32C"]:::done
     end
     lvl["Levels L0 .. Ln"]:::plan
   end

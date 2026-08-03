@@ -1,0 +1,11 @@
+{
+  "format": "sstable",
+  "version": 1,
+  "description": "Two puts written by SSTableWriter at M3 (ADR-0010). One data block, an empty metaindex block, an index block, and the footer. See format.md §7 for the annotated bytes.",
+  "fileSizeBytes": 132,
+  "magic": "0x5368616C65535354",
+  "entries": [
+    { "userKey": "a", "sequence": 1, "type": "PUT", "value": "1" },
+    { "userKey": "b", "sequence": 2, "type": "PUT", "value": "22" }
+  ]
+}
