@@ -90,6 +90,23 @@ class ShaleFlushTest {
     }
   }
 
+  @Test
+  void leftoverTempTableFromACrashedFlush_isIgnoredOnOpen() throws IOException {
+    try (Shale db = open(new RecordingMetrics())) {
+      for (int i = 0; i < 300; i++) {
+        db.put(key(i), value(i), Durability.SYNC);
+      }
+    }
+    // Simulate a flush that crashed after opening its temp file but before the atomic rename.
+    Path partial = dir.resolve("999999.sst.tmp");
+    Files.write(partial, new byte[] {1, 2, 3}); // not a valid table
+
+    try (Shale reopened = open(new RecordingMetrics())) {
+      assertThat(reopened.get(key(42))).isEqualTo(value(42)); // data intact, partial ignored
+    }
+    assertThat(Files.exists(partial)).as("the incomplete temp table is cleaned up").isFalse();
+  }
+
   private Shale open(RecordingMetrics metrics) throws IOException {
     return Shale.open(dir, Clock.system(), metrics, TINY_BUFFER_BYTES);
   }
