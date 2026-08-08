@@ -11,19 +11,24 @@ first principles in Java, with no third-party library for any core mechanism.
 > that implements a core concept is disallowed by rule, even when it would be faster
 > and more correct. See [`CLAUDE.md`](CLAUDE.md) §4.
 
-**Status:** **M3 complete** (tag `m3-sstable`). The engine now **flushes** a full memtable to a
-**hand-written SSTable** — a LevelDB block table (prefix-compressed blocks + restart points,
-last-key index, versioned footer, per-block CRC32C) — and reclaims the WAL segment once the
-table is durable (fsync + atomic rename **before** the log is dropped). Reads span the
-lock-free-skiplist memtable set and the on-disk tables, newest first; recovery replays the log
-into a table and resets it. The whole engine stays **durable and crash-consistent**: a crash
-test truncates the WAL at every offset and always recovers a clean prefix, a frozen golden
-SSTable guards against format drift, and a bit-flip-at-every-offset test proves every
-corruption is detected. `./gradlew build` + `crashTest` are green on JDK 25 (98 test cases
-across unit, property, model, concurrency, and crash tiers). M0 shipped the SPI/encoding, M1
-durability, M2 the lock-free skiplist; M4+ (merge iterator, manifest, compaction) is not yet
-written. Built strictly bottom-up — correctness before any optimisation (flush is synchronous;
-blocks are uncompressed; both are deliberately deferred, benchmark-gated changes).
+**Status:** **M4 complete** (tag `m4-merge`). Reads are now **streaming**: every source — the
+lock-free-skiplist memtables and every on-disk SSTable — presents one `InternalIterator`, a
+**heap-based multi-way merge** yields their global order, and a cursor **reconciles** it into
+what a reader sees (newest version per key wins, tombstones hide the key, bounds stop the scan).
+A range scan seeks each source straight to its lower bound and costs its *result*; until M4 it
+decoded every entry in the database into one list and sorted it. The cursor pins the tables it
+reads and releases them on close (N6). Point lookups deliberately keep a separate, merge-free
+path. Underneath, M3's **hand-written SSTable** — a LevelDB block table (prefix-compressed
+blocks + restart points, last-key index, versioned footer, per-block CRC32C) — is now read by a
+two-level index → data-block iterator that opens one block at a time. The whole engine stays
+**durable and crash-consistent**: a crash test truncates the WAL at every offset and always
+recovers a clean prefix, a frozen golden SSTable guards against format drift, and a
+bit-flip-at-every-offset test proves every corruption is detected. `./gradlew build` +
+`crashTest` are green on JDK 25 (159 test cases across unit, property, model, concurrency, and
+crash tiers). M0 shipped the SPI/encoding, M1 durability, M2 the lock-free skiplist, M3 the
+SSTable and flush; M5+ (manifest, compaction) is not yet written. Built strictly bottom-up —
+correctness before any optimisation (flush is synchronous; blocks are uncompressed; both are
+deliberately deferred, benchmark-gated changes).
 
 ---
 
@@ -65,16 +70,16 @@ is the architectural point of the project.
 The whole system, built and planned, in one place. Every box is a component from the
 project's own inventory (`documentation/roadmap/shale-roadmap.md`) — nothing is invented.
 
-**Legend:** solid box / `✓` = in the code now (M0). Dashed box + `Mn` = defined in the
-[Roadmap](#roadmap) and built at milestone *Mn*. Today only `shale-core`'s M0 slice is
-written; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build shells.
+**Legend:** solid box / `✓ Mn` = in the code now, built at milestone *Mn*. Dashed box + `Mn`
+= defined in the [Roadmap](#roadmap) and not yet written. Today `shale-core` is built through
+M4; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build shells.
 
 ### 1 · Modules, dependency direction, and the build gate
 
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M3: SPI · encoding · WAL · skiplist · SSTable + flush ; M4-M8: merge · manifest · compaction .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M8: manifest · compaction .. B+Tree"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
     server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
@@ -92,8 +97,8 @@ flowchart TB
 ```
 
 `shale-core` depends on nothing but the JDK; the other three depend inward only — the arrows
-are enforced in each module's `build.gradle.kts`, not by convention. Only the M0 slice of
-`shale-core` exists today (dashed border); everything else is a shell awaiting its milestone.
+are enforced in each module's `build.gradle.kts`, not by convention. `shale-core` is built
+through M4 (dashed border: M5-M8 remain); everything else is a shell awaiting its milestone.
 
 ### 2 · Shale — the single-node engine (full component scope)
 
@@ -143,7 +148,7 @@ flowchart TB
 
   subgraph rpath["Read path"]
     snap["Snapshot = SequenceNumber M7 · atomic WriteBatch M7"]:::plan
-    merge["Merge iterator M4 · min-heap<br/>reconcile newest-per-key · hide Tombstones"]:::plan
+    merge["Merge iterator ✓ M4 · min-heap over InternalIterator<br/>reconcile newest-per-key · hide Tombstones · seek to bound"]:::done
     cache["Block cache · Table cache M7 · OS page cache"]:::plan
   end
 
