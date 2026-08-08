@@ -12,70 +12,39 @@ memtables to disk is M3; until then they accumulate in memory.
 
 ---
 
-## 1. The skiplist: towers and express lanes
+## 1. In the whole project — why this milestone matters
 
-A skiplist is a sorted linked list with probabilistic "express lanes." Every node sits at level 0;
-each node also rises to higher levels with probability 1/4 per level (LevelDB's branching factor),
-capped at 12 levels. A search starts at the top of the head sentinel and drops down a level whenever
-the next node would overshoot the target — so it skips over most of the list, giving expected
-O(log n) search without the rebalancing a tree needs.
+M2 keeps M1's durability and removes M1's biggest simplification: reads no longer block writes.
+It delivers three things the roadmap names — a **hand-written skiplist** memtable, **memory
+accounting**, and the **active → immutable handoff** (memtable switching) — so the mutable
+memtable finally becomes the same shape real LSM engines have: one hot buffer that freezes into
+a queue of immutable ones. All three recur later:
 
-```mermaid
-flowchart LR
-  subgraph L2["level 2"]
-    h2["head"] --> c2["c"]
-  end
-  subgraph L1["level 1"]
-    h1["head"] --> a1["a"] --> c1["c"]
-  end
-  subgraph L0["level 0 — every node"]
-    h0["head"] --> a0["a"] --> b0["b"] --> c0["c"] --> d0["d"]
-  end
-  h2 -.tower.- h1 -.tower.- h0
-  a1 -.- a0
-  c2 -.- c1 -.- c0
-```
+1. **The skiplist** (`dev.shale.memtable.SkiplistMemtable`, ADR-0009) — LevelDB's single-writer,
+   lock-free-reader design, hand-written (N1). The memtable is exactly what M3 serialises to an
+   SSTable, so this is the structure every later flush writes from.
+2. **The handoff** (`MemtableSet` active + immutables) — the switch publishes one `volatile`
+   snapshot so readers never contend. M3's flush *drains* those immutables to disk; until then
+   they accumulate in memory (the documented M2 → M3 seam).
+3. **The differential oracle** — `TreeMemtable` is kept and turned into the test oracle that
+   checks the skiplist is observably a sorted map. The same oracle pattern (engine vs `TreeMap`)
+   drives the whole-project model harness through every later milestone.
 
-A search for `d`: start at `head` level 2 → `c` (c < d, advance) → at `c` level 2 the next is null, drop
-to level 1 → next is null, drop to level 0 → `d`. Nodes carry the **encoded internal key** and value;
-ordering is by [`InternalKeyComparator`](../../shale-core/src/main/java/dev/shale/internal/key/InternalKeyComparator.java)
-(user key ascending, sequence descending), so the newest version of a key sorts first.
+Where it sits: M2 replaces the M1 map beneath the unchanged `Memtable` seam and leaves the WAL
+format (ADR-0007) untouched; a switch only rolls to a new segment using M1's machinery. The
+concurrency contract it locks in — single writer, lock-free readers — becomes the engine's read
+path behaviour from here on.
 
-## 2. One writer, lock-free readers — safe publication
+---
 
-The concurrency contract (ADR-0009) is LevelDB's: **at most one writer at a time** (the engine
-serialises inserts) and **any number of lock-free readers**. The only mutable shared state is each
-node's forward-pointer array. `add` links a new node bottom-up, publishing each pointer with a
-**release** store; readers follow pointers with an **acquire** load. The consequence: a reader that
-observes a node also observes its fully-initialised (final) key and value — it may miss a concurrent
-insert, but it never sees a torn or half-linked node.
+## 2. High-level design (HLD) — what the engine does
 
-```mermaid
-sequenceDiagram
-  participant W as Writer (add)
-  participant N as new Node
-  participant P as prev[level] (in list)
-  participant R as Reader (ceiling / entries)
-  W->>N: build node, set its own next pointers (plain, not yet visible)
-  Note over W,N: node unreachable → no barrier needed on its own slots
-  W->>P: prev.setNextRelease(level, node)
-  Note over W,P: release store publishes the node
-  R->>P: prev.nextAcquire(level)
-  alt sees the new node
-    R->>N: reads node.internalKey / node.value (final, fully visible)
-  else sees the old successor
-    R->>R: proceeds without it — a valid earlier snapshot
-  end
-```
+The engine-level view of M2: how a write is applied and when the active memtable freezes into
+a immutable one, how reads answer without blocking, and how recovery re-forms one memtable out
+of many segments. The internals — the skiplist and its safe-publication reasoning — are the LLD
+in §3.
 
-`max height` is a `volatile int`: raising it publishes the new express lanes; a reader that reads a
-stale smaller height still traverses correctly on the lower levels. This is verified two ways: a
-[differential property test](../../shale-core/src/test/java/dev/shale/memtable/SkiplistMemtablePropertyTest.java)
-asserts the skiplist returns identical `entries()`/`ceiling()` to a `TreeMap` oracle, and a
-[concurrency stress test](../../shale-core/src/test/java/dev/shale/memtable/SkiplistMemtableConcurrencyTest.java)
-runs four readers against a live writer asserting no torn or out-of-order entry is ever observed.
-
-## 3. The write path and the memtable switch
+### 2.1 The write path and the memtable switch
 
 Writers serialise on the engine's `writeLock`, which guards the WAL, the sequence counter, and
 publication of the memtable set. The D3 ordering from M1 is unchanged — WAL durable **before** the
@@ -110,7 +79,7 @@ disk until the memtable is flushed to an SSTable and the segment deleted — **t
 then, immutable memtables accumulate in memory (the documented M2 → M3 seam); the default buffer size
 keeps ordinary use well clear of it, and tests drive switching with a small buffer.
 
-## 4. Reads across the memtable set
+### 2.2 Reads across the memtable set
 
 A read takes one volatile read of the `MemtableSet` and consults the memtables **newest first**
 (active, then immutables newest→oldest). Because a switch happens at a sequence-number boundary, all
@@ -134,7 +103,7 @@ key, keeps the first (newest) entry per user key, drops tombstones, and applies 
 in-memory merge is M2's stand-in for the heap-based multi-way merge across SSTables that arrives at
 M4.
 
-## 5. Recovery collapses the split
+### 2.3 Recovery collapses the split
 
 The runtime active/immutable split is a memory-only concept at M2 — nothing on disk records it. On
 reopen, [`Shale.open`](../../shale-core/src/main/java/dev/shale/Shale.java) replays **every** present
@@ -150,7 +119,77 @@ flowchart LR
   replay["replay in order → one SkiplistMemtable"] --> newseg["open 000004.wal"] --> engine["engine live; nextSequence = maxSeq + 1"]
 ```
 
-## 6. The types added / changed at M2
+---
+
+## 3. Low-level design (LLD) — the mechanism, down to the pointer
+
+Where the HLD flows become concrete: the probabilistic list structure, the exact publication
+rules that make readers safe without locks, and the types that implement them.
+
+### 3.1 The skiplist: towers and express lanes
+
+A skiplist is a sorted linked list with probabilistic "express lanes." Every node sits at level 0;
+each node also rises to higher levels with probability 1/4 per level (LevelDB's branching factor),
+capped at 12 levels. A search starts at the top of the head sentinel and drops down a level whenever
+the next node would overshoot the target — so it skips over most of the list, giving expected
+O(log n) search without the rebalancing a tree needs.
+
+```mermaid
+flowchart LR
+  subgraph L2["level 2"]
+    h2["head"] --> c2["c"]
+  end
+  subgraph L1["level 1"]
+    h1["head"] --> a1["a"] --> c1["c"]
+  end
+  subgraph L0["level 0 — every node"]
+    h0["head"] --> a0["a"] --> b0["b"] --> c0["c"] --> d0["d"]
+  end
+  h2 -.tower.- h1 -.tower.- h0
+  a1 -.- a0
+  c2 -.- c1 -.- c0
+```
+
+A search for `d`: start at `head` level 2 → `c` (c < d, advance) → at `c` level 2 the next is null, drop
+to level 1 → next is null, drop to level 0 → `d`. Nodes carry the **encoded internal key** and value;
+ordering is by [`InternalKeyComparator`](../../shale-core/src/main/java/dev/shale/internal/key/InternalKeyComparator.java)
+(user key ascending, sequence descending), so the newest version of a key sorts first.
+
+### 3.2 One writer, lock-free readers — safe publication
+
+The concurrency contract (ADR-0009) is LevelDB's: **at most one writer at a time** (the engine
+serialises inserts) and **any number of lock-free readers**. The only mutable shared state is each
+node's forward-pointer array. `add` links a new node bottom-up, publishing each pointer with a
+**release** store; readers follow pointers with an **acquire** load. The consequence: a reader that
+observes a node also observes its fully-initialised (final) key and value — it may miss a concurrent
+insert, but it never sees a torn or half-linked node.
+
+```mermaid
+sequenceDiagram
+  participant W as Writer (add)
+  participant N as new Node
+  participant P as prev[level] (in list)
+  participant R as Reader (ceiling / entries)
+  W->>N: build node, set its own next pointers (plain, not yet visible)
+  Note over W,N: node unreachable → no barrier needed on its own slots
+  W->>P: prev.setNextRelease(level, node)
+  Note over W,P: release store publishes the node
+  R->>P: prev.nextAcquire(level)
+  alt sees the new node
+    R->>N: reads node.internalKey / node.value (final, fully visible)
+  else sees the old successor
+    R->>R: proceeds without it — a valid earlier snapshot
+  end
+```
+
+`max height` is a `volatile int`: raising it publishes the new express lanes; a reader that reads a
+stale smaller height still traverses correctly on the lower levels. This is verified two ways: a
+[differential property test](../../shale-core/src/test/java/dev/shale/memtable/SkiplistMemtablePropertyTest.java)
+asserts the skiplist returns identical `entries()`/`ceiling()` to a `TreeMap` oracle, and a
+[concurrency stress test](../../shale-core/src/test/java/dev/shale/memtable/SkiplistMemtableConcurrencyTest.java)
+runs four readers against a live writer asserting no torn or out-of-order entry is ever observed.
+
+### 3.3 The types added / changed at M2
 
 ```mermaid
 flowchart TB
@@ -173,7 +212,7 @@ flowchart TB
   shale -.active memtable is.-> skl
 ```
 
-## 7. What proves it
+## 4. What proves it
 
 | Behaviour | Test |
 |---|---|

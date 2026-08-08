@@ -27,7 +27,7 @@ whole-system diagram, then come back here.
 |---|---|---|
 | **Roadmap** | *What are we building, and in what order?* Charter, per-milestone plans, release notes. | [roadmap/](roadmap/) |
 | **ADRs** | *Why is it built this way?* One record per expensive, hard-to-reverse decision. | [adr/README.md](adr/README.md) |
-| **Architecture** | *How does the shipped code actually work?* As-built explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
+| **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
 | **Conventions** | *What are the rules?* Naming, style, commits, concurrency, formats, errors, testing, docs. | [conventions/](conventions/) |
 | **`format.md`** | *What exactly is on disk?* Byte tables + worked hex, beside the code, pinned by golden files. | e.g. [wal](../shale-core/src/main/java/dev/shale/wal/format.md), [sstable](../shale-core/src/main/java/dev/shale/sstable/format.md) |
 
@@ -42,7 +42,7 @@ flowchart LR
   adr --> fmt["format.md<br/>(byte layout, if on-disk)"]
   fmt --> code["code + tests<br/>(package-info · Javadoc · golden)"]
   adr --> code
-  code --> arch["architecture: as-built<br/>(how it really works, diagrams)"]
+  code --> arch["architecture: as-built<br/>(HLD + LLD, diagrams)"]
   arch --> note["roadmap: release note<br/>+ README status"]
 ```
 
@@ -64,5 +64,5 @@ flowchart LR
 Through **M3** (tag `m3-sstable`): a durable, crash-consistent engine with a write-ahead log, a
 hand-written lock-free skiplist memtable, and flush to LevelDB-style SSTables. See the
 [README status](../README.md) and the newest [release note](roadmap/) for specifics; the
-[architecture index](architecture/README.md) lists the as-built explainer for every completed
+[architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed
 milestone.

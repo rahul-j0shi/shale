@@ -17,7 +17,7 @@ split a topic across two, never invent a parallel system.
 |---|---|---|
 | `documentation/adr/NNNN-*.md` | a **decision** — the forces, the options, why one won, what it costs | before the code it decides |
 | `<package>/format.md` | an **exact byte layout** — table, worked hex example, golden-pinned CRCs | before the encoder (on-disk-formats.md §1) |
-| `documentation/architecture/mN-*.md` | the **as-built explainer** — how the shipped code actually works, with diagrams | alongside the code, same milestone |
+| `documentation/architecture/mN-*.md` | the **as-built explainer** — how the shipped code actually works, as HLD/LLD with diagrams | alongside the code, same milestone |
 | `documentation/roadmap/` | **intent** — the charter, the plan for a milestone, and its release note | plan before, release note after |
 | `package-info.java` | a **package's** purpose, threading model, and entry point | with the package |
 | Javadoc + `// comments` | a **type's** contract and its source citation (N9) | with the type |
