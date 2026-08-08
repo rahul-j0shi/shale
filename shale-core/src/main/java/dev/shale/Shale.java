@@ -4,6 +4,7 @@ import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.InternalKeyComparator;
 import dev.shale.internal.key.ValueType;
+import dev.shale.iterator.InternalIterator;
 import dev.shale.memtable.Memtable;
 import dev.shale.memtable.SkiplistMemtable;
 import dev.shale.sstable.SSTableReader;
@@ -250,9 +251,12 @@ public final class Shale implements StorageBackend {
       Path finalPath, Memtable memtable, InternalKeyComparator ordering, Metrics metrics)
       throws IOException {
     Path tempPath = finalPath.resolveSibling(finalPath.getFileName() + TEMP_SUFFIX);
-    try (SSTableWriter writer = SSTableWriter.open(tempPath)) {
-      for (Memtable.Entry entry : memtable.entries()) {
-        writer.add(entry.internalKey(), entry.value());
+    try (SSTableWriter writer = SSTableWriter.open(tempPath);
+        InternalIterator entries = memtable.iterator()) {
+      // Streamed, not materialised: a flush that first copied the whole memtable into a list
+      // would double its peak footprint at exactly the moment memory pressure triggered it.
+      for (entries.seekToFirst(); entries.valid(); entries.next()) {
+        writer.add(entries.internalKey(), entries.value());
       }
       writer.finish(); // fsync
     }
@@ -306,7 +310,12 @@ public final class Shale implements StorageBackend {
     ReadView snapshot = view; // one volatile read: a stable view for the whole scan
     List<Memtable.Entry> merged = new ArrayList<>();
     for (Memtable memtable : snapshot.memtablesNewestFirst()) {
-      merged.addAll(memtable.entries());
+      // Still materialising: the heap merge that makes this streaming lands later in M4.
+      try (InternalIterator entries = memtable.iterator()) {
+        for (entries.seekToFirst(); entries.valid(); entries.next()) {
+          merged.add(new Memtable.Entry(entries.internalKey(), entries.value()));
+        }
+      }
     }
     for (SSTableReader table : snapshot.sstablesNewestFirst()) {
       for (SSTableReader.Entry entry : table.entries()) {

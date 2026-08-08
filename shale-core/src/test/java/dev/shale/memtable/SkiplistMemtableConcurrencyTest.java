@@ -86,7 +86,7 @@ class SkiplistMemtableConcurrencyTest {
     }
 
     // Final state: every key present exactly once, in ascending order, values intact.
-    List<Memtable.Entry> entries = memtable.entries();
+    List<Memtable.Entry> entries = Memtables.entries(memtable);
     assertThat(entries).hasSize(KEYS);
     verifyOrderedAndIntact(entries, ordering);
     List<Integer> ids = entries.stream().map(e -> idOf(e.internalKey())).sorted().toList();
@@ -94,7 +94,7 @@ class SkiplistMemtableConcurrencyTest {
   }
 
   private static void verifySnapshot(SkiplistMemtable memtable, InternalKeyComparator ordering) {
-    verifyOrderedAndIntact(memtable.entries(), ordering);
+    verifyOrderedAndIntact(Memtables.entries(memtable), ordering);
   }
 
   /** Every entry is strictly after the previous one and carries the value its key implies. */

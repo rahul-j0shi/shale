@@ -42,7 +42,7 @@ class SkiplistMemtablePropertyTest {
       sequence++;
     }
 
-    assertThat(describe(skiplist.entries())).isEqualTo(describe(tree.entries()));
+    assertThat(describe(Memtables.entries(skiplist))).isEqualTo(describe(Memtables.entries(tree)));
     for (int id = 0; id < USER_KEY_SPACE; id++) {
       byte[] probe =
           new InternalKey(userKey(id), InternalKey.MAX_SEQUENCE, ValueType.FOR_SEEK).encode();
