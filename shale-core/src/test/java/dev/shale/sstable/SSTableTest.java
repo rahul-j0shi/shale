@@ -51,7 +51,7 @@ class SSTableTest {
 
       // full iteration is in stored (internal-key) order (compared by content, not array identity)
       List<String> iterated = new ArrayList<>();
-      for (SSTableReader.Entry entry : reader.entries()) {
+      for (SSTableReader.Entry entry : SSTables.entries(reader)) {
         iterated.add(HexFormat.of().formatHex(entry.internalKey()));
       }
       List<String> expected = internalKeys.stream().map(HexFormat.of()::formatHex).toList();
@@ -94,7 +94,7 @@ class SSTableTest {
     SSTableReader reader = SSTableReader.open(path, ORDERING);
     try {
       List<String> rows = new ArrayList<>();
-      for (SSTableReader.Entry entry : reader.entries()) {
+      for (SSTableReader.Entry entry : SSTables.entries(reader)) {
         rows.add(HexFormat.of().formatHex(entry.internalKey()));
       }
       SSTableReader.Entry ceiling = reader.ceiling(seek(userKey(0)));

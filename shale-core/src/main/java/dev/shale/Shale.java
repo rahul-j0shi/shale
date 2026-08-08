@@ -318,8 +318,11 @@ public final class Shale implements StorageBackend {
       }
     }
     for (SSTableReader table : snapshot.sstablesNewestFirst()) {
-      for (SSTableReader.Entry entry : table.entries()) {
-        merged.add(new Memtable.Entry(entry.internalKey(), entry.value()));
+      // Still materialising: the heap merge that makes this streaming lands later in M4.
+      try (InternalIterator entries = table.iterator()) {
+        for (entries.seekToFirst(); entries.valid(); entries.next()) {
+          merged.add(new Memtable.Entry(entries.internalKey(), entries.value()));
+        }
       }
     }
     // Sort by internal key (user asc, sequence desc) so the newest version of each user key — from
@@ -381,10 +384,19 @@ public final class Shale implements StorageBackend {
     }
   }
 
+  /**
+   * The highest sequence number stored in {@code table}, to resume stamping above it on reopen.
+   *
+   * <p>Every entry is examined because the internal-key order is user key ascending, not sequence
+   * ordered — the newest mutation in a table can sit anywhere in it. Streaming keeps that scan's
+   * cost to one data block at a time; it used to decode the entire table into a list first.
+   */
   private static long maxSequenceOf(SSTableReader table) {
     long max = 0;
-    for (SSTableReader.Entry entry : table.entries()) {
-      max = Math.max(max, InternalKey.decode(entry.internalKey()).sequenceNumber());
+    try (InternalIterator entries = table.iterator()) {
+      for (entries.seekToFirst(); entries.valid(); entries.next()) {
+        max = Math.max(max, InternalKey.decode(entries.internalKey()).sequenceNumber());
+      }
     }
     return max;
   }

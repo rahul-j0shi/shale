@@ -7,21 +7,24 @@ import dev.shale.internal.annotations.Immutable;
 import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.coding.Crc32c;
 import dev.shale.internal.coding.LittleEndian;
+import dev.shale.iterator.InternalIterator;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Reads an SSTable back (format.md §1). {@link #open} verifies the footer and loads the index
  * block; {@link #ceiling} resolves a point lookup index → data block → restart search, and {@link
- * #entries} iterates the whole table in order. Data blocks are read from the file on demand and
+ * #iterator} streams the whole table in order. Data blocks are read from the file on demand and
  * their CRC verified before use (N4).
+ *
+ * <p>The two read shapes are deliberate and must agree about where a target resolves: {@code
+ * ceiling} serves the engine's point lookup in one descent, {@code iterator} feeds the merge that
+ * spans every source (ADR-0011).
  *
  * <p><b>Threading:</b> thread-safe — the index block is immutable and data-block reads are
  * positional ({@code FileChannel.read(buffer, position)}), so concurrent readers do not interfere.
@@ -93,18 +96,19 @@ public final class SSTableReader implements AutoCloseable {
     return data.valid() ? new Entry(data.key(), data.value()) : null;
   }
 
-  /** Every entry in ascending internal-key order. The streaming merge across tables is M4. */
-  public List<Entry> entries() {
-    List<Entry> out = new ArrayList<>();
-    Block.Iterator index = indexBlock.iterator(comparator);
-    for (index.seekToFirst(); index.valid(); index.next()) {
-      BlockHandle handle = BlockHandle.decode(index.value(), 0).handle();
-      Block.Iterator data = dataBlockAt(handle).iterator(comparator);
-      for (data.seekToFirst(); data.valid(); data.next()) {
-        out.add(new Entry(data.key(), data.value()));
-      }
-    }
-    return out;
+  /**
+   * A fresh, unpositioned cursor over every entry in ascending internal-key order, reading one data
+   * block at a time.
+   *
+   * <p>Replaced the materialising {@code entries()} at M4 (ADR-0011): that method decoded the whole
+   * table into a list, so iterating a large table cost the table rather than the cursor.
+   *
+   * <p>The returned iterator reads through this reader's channel, so it is only usable while a
+   * reference is held. It does <em>not</em> take one itself — the cursor that owns the read does
+   * (N6), because that is the object whose lifetime matches the caller's.
+   */
+  public InternalIterator iterator() {
+    return new SSTableIterator(comparator, indexBlock, this::dataBlockAt);
   }
 
   /** Adds a reference; pair with {@link #release}. */

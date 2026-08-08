@@ -69,7 +69,9 @@ class SSTablePropertyTest {
     SSTableReader reader = SSTableReader.open(path, ORDERING);
     try {
       List<String> iterated =
-          reader.entries().stream().map(e -> hex(e.internalKey()) + "=" + hex(e.value())).toList();
+          SSTables.entries(reader).stream()
+              .map(e -> hex(e.internalKey()) + "=" + hex(e.value()))
+              .toList();
       List<String> expectedRows =
           expected.entrySet().stream().map(e -> hex(e.getKey()) + "=" + hex(e.getValue())).toList();
       assertThat(iterated).isEqualTo(expectedRows);
