@@ -76,7 +76,13 @@ contract M4 can honour); `get`, which keeps its per-source `ceiling` probe by de
 - **Newest wins:** across memtables and SSTables, the highest-sequence version of a user key is
   the one returned; a tombstone at a higher sequence hides every older value.
 - **Bounded work:** a scan of a narrow range does not decode entries outside it — `seek`, not
-  filter. Asserted by counting block reads, not by timing.
+  filter. *Asserted by counting how far the cursor advances its sources* (`ReconcilingCursorTest`
+  wraps a source in a counting iterator and requires one seek plus at most one advance per returned
+  entry). The plan originally said "counting block reads"; that would need a read counter on
+  `SSTableReader` which does not exist, and adding production instrumentation for one assertion is
+  not worth it when the claim — advances scale with the result, not the source — is testable
+  directly at the iterator seam. Block-level accounting arrives naturally with the M7 block cache,
+  which needs hit/miss counters anyway.
 - **N4:** corruption encountered mid-scan propagates out of `next()` with its offset; the scan
   does not skip the block and does not return a partial result as if it were complete.
 - **N6:** a `ReconcilingCursor` holds one reference per SSTable it can read from, and `close()`

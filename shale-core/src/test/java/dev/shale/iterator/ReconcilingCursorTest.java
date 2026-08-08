@@ -218,6 +218,91 @@ class ReconcilingCursorTest {
     assertThat(second.releases).isEqualTo(1);
   }
 
+  @Test
+  void narrowScan_doesNotWalkEntriesOutsideItsRange() {
+    // The point of M4: a bounded scan seeks, it does not filter. Counting how far the cursor
+    // advances its source proves that directly — the old materialising scan decoded all 200
+    // entries whatever range was asked for, so this is the regression that matters most.
+    Memtable memtable = new TreeMemtable(BytewiseComparator.INSTANCE);
+    for (int i = 0; i < 200; i++) {
+      memtable.add(new InternalKey(key(i), 1, ValueType.PUT).encode(), bytes(String.valueOf(i)));
+    }
+    CountingIterator counted = new CountingIterator(memtable.iterator());
+
+    List<String> found = new ArrayList<>();
+    try (Cursor cursor =
+        new ReconcilingCursor(
+            new MergingIterator(List.of(counted), ORDERING),
+            BytewiseComparator.INSTANCE,
+            key(100),
+            key(103),
+            List.of())) {
+      for (; cursor.isValid(); cursor.next()) {
+        found.add(new String(cursor.key(), StandardCharsets.US_ASCII));
+      }
+    }
+
+    assertThat(found).containsExactly("key100", "key101", "key102");
+    // One seek, then a step per entry returned plus the one that crossed the upper bound.
+    assertThat(counted.seeks).isEqualTo(1);
+    assertThat(counted.advances)
+        .as("advances must scale with the result, not the source")
+        .isLessThanOrEqualTo(found.size() + 1);
+  }
+
+  /** Delegates, counting how far it is driven — the evidence for "seek, not filter". */
+  private static final class CountingIterator implements InternalIterator {
+    private final InternalIterator delegate;
+    private int seeks;
+    private int advances;
+
+    CountingIterator(InternalIterator delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void seek(byte[] internalKey) {
+      seeks++;
+      delegate.seek(internalKey);
+    }
+
+    @Override
+    public void seekToFirst() {
+      seeks++;
+      delegate.seekToFirst();
+    }
+
+    @Override
+    public boolean valid() {
+      return delegate.valid();
+    }
+
+    @Override
+    public void next() {
+      advances++;
+      delegate.next();
+    }
+
+    @Override
+    public byte[] internalKey() {
+      return delegate.internalKey();
+    }
+
+    @Override
+    public byte[] value() {
+      return delegate.value();
+    }
+
+    @Override
+    public void close() {
+      delegate.close();
+    }
+  }
+
+  private static byte[] key(int i) {
+    return String.format("key%03d", i).getBytes(StandardCharsets.US_ASCII);
+  }
+
   /** Counts its reference operations, so the retain/release pairing can be asserted directly. */
   private static final class CountingTable implements ReferenceCounted {
     private int retains;
