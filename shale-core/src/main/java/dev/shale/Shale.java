@@ -5,6 +5,8 @@ import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.InternalKeyComparator;
 import dev.shale.internal.key.ValueType;
 import dev.shale.iterator.InternalIterator;
+import dev.shale.iterator.MergingIterator;
+import dev.shale.iterator.ReconcilingCursor;
 import dev.shale.memtable.Memtable;
 import dev.shale.memtable.SkiplistMemtable;
 import dev.shale.sstable.SSTableReader;
@@ -27,7 +29,13 @@ import java.util.stream.Stream;
  * The single-node LSM engine (M3 slice): every mutation is logged to the WAL before it is applied
  * to an in-memory {@link Memtable}; when the active memtable fills it is switched out and
  * <b>flushed</b> to an immutable {@link SSTableReader} on disk, after which its WAL segment is
- * reclaimed. Reads consult the memtable set and then the SSTables, newest first.
+ * reclaimed.
+ *
+ * <p><b>Two read paths, deliberately (ADR-0011).</b> {@link #get} probes each source's {@code
+ * ceiling} newest-first and stops at the first source holding any version of the key — a point
+ * lookup needs no global order, so it builds no merge. {@link #scan} streams a heap merge across
+ * every source through a {@link ReconcilingCursor}. They must agree about what is visible; when M7
+ * adds snapshot filtering, both learn it.
  *
  * <p><b>Threading:</b> thread-safe. Writers serialise on {@code writeLock} (guarding the WAL, the
  * sequence and file-number counters, and publication of the read view); readers take a single
@@ -266,6 +274,15 @@ public final class Shale implements StorageBackend {
     return SSTableReader.open(finalPath, ordering);
   }
 
+  /**
+   * The value for {@code userKey}, or null if absent or deleted.
+   *
+   * <p>Probes each source newest-first and returns as soon as one holds any version of the key.
+   * This deliberately does not go through the merge iterator {@link #scan} uses: a point lookup
+   * wants the first source with the key, not a globally ordered stream, so constructing and
+   * heapifying a merge would cost more for no answer it does not already have. LevelDB splits the
+   * paths for the same reason (ADR-0011).
+   */
   @Override
   public byte[] get(byte[] userKey) {
     if (userKey == null) {
@@ -305,58 +322,36 @@ public final class Shale implements StorageBackend {
     return found.valueType() == ValueType.PUT ? value.clone() : null; // tombstone → deleted
   }
 
+  /**
+   * A streaming cursor over the live keys in {@code [fromInclusive, toExclusive)}, merging the
+   * memtable set and every SSTable (ADR-0011).
+   *
+   * <p>The cost is the result, not the database: each source seeks straight to the lower bound, the
+   * heap merge yields entries one at a time, and the scan stops at the upper bound. Until M4 this
+   * decoded every entry in every source into one list and sorted it, so a one-key scan of a million
+   * keys paid for a million entries.
+   *
+   * <p><b>The returned cursor must be closed.</b> It pins every SSTable it can read from for its
+   * whole life (N6); leaking one leaks file handles.
+   */
   @Override
   public Cursor scan(byte[] fromInclusive, byte[] toExclusive) {
     ReadView snapshot = view; // one volatile read: a stable view for the whole scan
-    List<Memtable.Entry> merged = new ArrayList<>();
+    List<InternalIterator> sources = new ArrayList<>();
     for (Memtable memtable : snapshot.memtablesNewestFirst()) {
-      // Still materialising: the heap merge that makes this streaming lands later in M4.
-      try (InternalIterator entries = memtable.iterator()) {
-        for (entries.seekToFirst(); entries.valid(); entries.next()) {
-          merged.add(new Memtable.Entry(entries.internalKey(), entries.value()));
-        }
-      }
+      sources.add(memtable.iterator());
     }
     for (SSTableReader table : snapshot.sstablesNewestFirst()) {
-      // Still materialising: the heap merge that makes this streaming lands later in M4.
-      try (InternalIterator entries = table.iterator()) {
-        for (entries.seekToFirst(); entries.valid(); entries.next()) {
-          merged.add(new Memtable.Entry(entries.internalKey(), entries.value()));
-        }
-      }
+      sources.add(table.iterator());
     }
-    // Sort by internal key (user asc, sequence desc) so the newest version of each user key — from
-    // whichever source — sorts first; the streaming heap merge across sources is M4.
-    merged.sort(
-        (a, b) -> ordering.compare(ByteRange.of(a.internalKey()), ByteRange.of(b.internalKey())));
-
-    List<byte[]> keys = new ArrayList<>();
-    List<byte[]> values = new ArrayList<>();
-    byte[] previousUserKey = null;
-    for (Memtable.Entry entry : merged) {
-      InternalKey key = InternalKey.decode(entry.internalKey());
-      byte[] userKey = key.userKey();
-      if (previousUserKey != null && userComparator.compare(userKey, previousUserKey) == 0) {
-        continue; // an older version of a user key already resolved
-      }
-      previousUserKey = userKey;
-      if (outOfRange(userKey, fromInclusive, toExclusive)) {
-        continue;
-      }
-      if (key.valueType() == ValueType.DELETE) {
-        continue; // tombstone hides the key
-      }
-      keys.add(userKey.clone());
-      values.add(entry.value().clone());
-    }
-    return new ListCursor(keys, values);
-  }
-
-  private boolean outOfRange(byte[] userKey, byte[] fromInclusive, byte[] toExclusive) {
-    if (fromInclusive != null && userComparator.compare(userKey, fromInclusive) < 0) {
-      return true;
-    }
-    return toExclusive != null && userComparator.compare(userKey, toExclusive) >= 0;
+    // Source order only breaks ties the merge cannot actually see — sequence numbers are unique,
+    // so precedence is already in the keys. It is kept newest-first to match the read view.
+    return new ReconcilingCursor(
+        new MergingIterator(sources, ordering),
+        userComparator,
+        fromInclusive,
+        toExclusive,
+        List.copyOf(snapshot.sstablesNewestFirst()));
   }
 
   @Override
@@ -463,43 +458,6 @@ public final class Shale implements StorageBackend {
       all.add(active);
       all.addAll(immutablesNewestFirst);
       return all;
-    }
-  }
-
-  /** A forward cursor over materialised user keys and values. */
-  private static final class ListCursor implements Cursor {
-    private final List<byte[]> keys;
-    private final List<byte[]> values;
-    private int index;
-
-    ListCursor(List<byte[]> keys, List<byte[]> values) {
-      this.keys = keys;
-      this.values = values;
-    }
-
-    @Override
-    public boolean isValid() {
-      return index < keys.size();
-    }
-
-    @Override
-    public void next() {
-      index++;
-    }
-
-    @Override
-    public byte[] key() {
-      return keys.get(index);
-    }
-
-    @Override
-    public byte[] value() {
-      return values.get(index);
-    }
-
-    @Override
-    public void close() {
-      // nothing to release
     }
   }
 }
