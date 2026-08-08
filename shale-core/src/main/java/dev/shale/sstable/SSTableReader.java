@@ -8,6 +8,7 @@ import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.coding.Crc32c;
 import dev.shale.internal.coding.LittleEndian;
 import dev.shale.iterator.InternalIterator;
+import dev.shale.iterator.ReferenceCounted;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -35,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @see <a href="https://github.com/google/leveldb/blob/main/table/table.cc">LevelDB table.cc</a>
  */
 @ThreadSafe
-public final class SSTableReader implements AutoCloseable {
+public final class SSTableReader implements AutoCloseable, ReferenceCounted {
 
   private final Path path;
   private final FileChannel channel;
@@ -112,11 +113,13 @@ public final class SSTableReader implements AutoCloseable {
   }
 
   /** Adds a reference; pair with {@link #release}. */
+  @Override
   public void retain() {
     references.incrementAndGet();
   }
 
   /** Drops a reference; the last release closes the channel. */
+  @Override
   public void release() {
     if (references.decrementAndGet() == 0) {
       try {
