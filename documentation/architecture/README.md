@@ -27,6 +27,7 @@ Every page answers the same three questions, in order:
 | M1 | [m1-wal-and-map.md](m1-wal-and-map.md) | Write path, durability modes, recovery, read path | WAL fragment layout, the recovery state machine, the types |
 | M2 | [m2-memtable-and-handoff.md](m2-memtable-and-handoff.md) | Write path + memtable switch, cross-memtable reads, recovery | Skiplist structure, safe publication, the types |
 | M3 | [m3-sstable-and-flush.md](m3-sstable-and-flush.md) | Flush, reads across tables, recovery-flush | SSTable block-table format, the block reader, the types |
+| M4 | [m4-merge-iterator.md](m4-merge-iterator.md) | The two read paths, a scan end to end, the reconciliation rules | The heap, the two-level SSTable iterator, cursor ownership |
 
 Each milestone's release note lives under [`../roadmap/`](../roadmap/); the decisions behind
 these shapes are in [`../adr/`](../adr/).

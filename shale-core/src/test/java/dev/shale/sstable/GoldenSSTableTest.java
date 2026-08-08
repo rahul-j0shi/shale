@@ -38,7 +38,7 @@ class GoldenSSTableTest {
 
     SSTableReader reader = SSTableReader.open(path, ORDERING);
     try {
-      List<SSTableReader.Entry> entries = reader.entries();
+      List<SSTableReader.Entry> entries = SSTables.entries(reader);
       assertThat(entries).hasSize(2);
       assertEntry(entries.get(0), "a", 1, "1");
       assertEntry(entries.get(1), "b", 2, "22");

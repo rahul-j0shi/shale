@@ -21,7 +21,7 @@ class SkiplistMemtableTest {
 
   @Test
   void empty_hasNoEntriesNoCeilingZeroSize() {
-    assertThat(memtable.entries()).isEmpty();
+    assertThat(Memtables.entries(memtable)).isEmpty();
     assertThat(memtable.ceiling(put("a", 1))).isNull();
     assertThat(memtable.sizeBytes()).isZero();
   }
@@ -46,7 +46,8 @@ class SkiplistMemtableTest {
     memtable.add(put("a", 9), value("a9")); // newer version of "a" sorts before a@2
     memtable.add(put("c", 1), value("c1"));
 
-    List<String> order = memtable.entries().stream().map(SkiplistMemtableTest::describe).toList();
+    List<String> order =
+        Memtables.entries(memtable).stream().map(SkiplistMemtableTest::describe).toList();
     assertThat(order).containsExactly("a#9", "a#2", "b#5", "c#1");
   }
 

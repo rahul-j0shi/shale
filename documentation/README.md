@@ -61,8 +61,9 @@ flowchart LR
 
 ## Where the project is now
 
-Through **M3** (tag `m3-sstable`): a durable, crash-consistent engine with a write-ahead log, a
-hand-written lock-free skiplist memtable, and flush to LevelDB-style SSTables. See the
+Through **M4** (tag `m4-merge`): a durable, crash-consistent engine with a write-ahead log, a
+hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming reads
+through a heap-based multi-way merge with reconciliation. See the
 [README status](../README.md) and the newest [release note](roadmap/) for specifics; the
 [architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed
 milestone.

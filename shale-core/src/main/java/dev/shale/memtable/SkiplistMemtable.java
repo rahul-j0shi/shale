@@ -2,10 +2,10 @@ package dev.shale.memtable;
 
 import dev.shale.ByteRange;
 import dev.shale.KeyComparator;
+import dev.shale.internal.annotations.NotThreadSafe;
 import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.key.InternalKeyComparator;
-import java.util.ArrayList;
-import java.util.List;
+import dev.shale.iterator.InternalIterator;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -85,12 +85,8 @@ public final class SkiplistMemtable implements Memtable {
   }
 
   @Override
-  public List<Entry> entries() {
-    List<Entry> out = new ArrayList<>();
-    for (Node node = head.nextAcquire(0); node != null; node = node.nextAcquire(0)) {
-      out.add(new Entry(node.internalKey, node.value));
-    }
-    return out;
+  public InternalIterator iterator() {
+    return new SkiplistIterator();
   }
 
   @Override
@@ -131,6 +127,58 @@ public final class SkiplistMemtable implements Memtable {
       nodeHeight++;
     }
     return nodeHeight;
+  }
+
+  /**
+   * A cursor down level 0, the lane that links every node. Seeking reuses {@link
+   * #findGreaterOrEqual}, so the iterator and {@link #ceiling} resolve a target by exactly the same
+   * descent — they cannot drift apart.
+   *
+   * <p>Reads are lock-free (ADR-0009): each hop is an acquire load, so a node this cursor observes
+   * is fully initialised. A concurrent insert may or may not be seen, which is the memtable's
+   * documented contract and harmless here — the engine only iterates memtables it has already
+   * frozen, or the active one under a view whose staleness a reader is entitled to.
+   */
+  @NotThreadSafe
+  private final class SkiplistIterator implements InternalIterator {
+
+    /** The node under the cursor, or null when unpositioned or exhausted. Single-thread owned. */
+    private Node current;
+
+    @Override
+    public void seek(byte[] internalKey) {
+      current = findGreaterOrEqual(internalKey, null);
+    }
+
+    @Override
+    public void seekToFirst() {
+      current = head.nextAcquire(0);
+    }
+
+    @Override
+    public boolean valid() {
+      return current != null;
+    }
+
+    @Override
+    public void next() {
+      current = current.nextAcquire(0);
+    }
+
+    @Override
+    public byte[] internalKey() {
+      return current.internalKey;
+    }
+
+    @Override
+    public byte[] value() {
+      return current.value;
+    }
+
+    @Override
+    public void close() {
+      current = null; // nothing to release; dropping the reference keeps no node alive
+    }
   }
 
   /** A tower: an immutable key/value and one forward pointer per level it participates in. */

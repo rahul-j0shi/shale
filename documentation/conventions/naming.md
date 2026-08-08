@@ -30,6 +30,9 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `RangeTombstone` | `RangeDelete` | A deletion record covering a key range |
 | `Compaction` | `Merge`, `Cleanup` | Background merge of SSTables |
 | `Flush` | `Spill`, `Persist` | Writing an immutable memtable to an SSTable |
+| merge iteration | `k-way merge`, `zip`, `interleave` | Reading many ordered sources as one ordered stream |
+| `Reconciliation` | `dedup`, `resolve`, `collapse` | Choosing the visible entry per user key: newest wins, tombstones hide |
+| `InternalIterator` | `Scanner`, `Reader`, `Stream` | A forward cursor over encoded internal keys, implemented by every read source |
 | `Level` | `Tier` (unless tiered compaction) | An LSM level |
 | `DataBlock` / `IndexBlock` / `FilterBlock` | `Page`, `Chunk` | SSTable block kinds |
 | `RestartPoint` | `Anchor`, `Marker` | Full-key checkpoint in a data block |
