@@ -364,6 +364,28 @@ a good one and the artifact is honestly yours.
 
 ## 9. Ordered action list
 
+### Progress — W0 is complete (2026-09-07)
+
+| W0 item | Status |
+|---|---|
+| 1. Push `main` + tags; clean up branches | ✅ `main` and all five tags on `origin`; the four merged branches and remote `eager-koala` deleted; only `main` remains |
+| 2. CI workflow + badge | ✅ `.github/workflows/build.yml` (`build` then `crashTest`, Temurin 25); badge in the README. The four "checked in CI" claims are now true — and the strongest of them is *enforced*: `verifyNoRuntimeDependencies` resolves `shale-core`'s runtime graph and fails if it is non-empty, verified by mutation |
+| 3. Doc/code contradictions | ✅ `Durability.GROUP` Javadoc, stale "At M0…", varints package-info, ADR-0002 date, `flotilla-rpc` path, M3-vs-M5 manifest reference, the lock-across-I/O deviation, the process-crash vs power-loss model, the SLF4J/zero-dependency conflict |
+| 4. `soakTest` task with no soak tests | ✅ Kept and dated: `testing.md` now states the task is registered, selects nothing, and that the tier arrives at M6 |
+| 5. Archive the M0 task script | ✅ `documentation/roadmap/archive/`, with a README saying why and what the plan format should be |
+| 6. README rewrite | ✅ 317 → 101 lines; built/not-built table by component; the four scope diagrams moved intact to `documentation/architecture/project-scope.md` |
+| — | ✅ **Roadmap updated** (not in the original W0 list, and necessary): M5.5 inserted, M8 time-boxed, M11 struck to a non-goal — in the README table *and* charter §E, so the tracker and this file no longer disagree |
+
+`./gradlew build crashTest` was run and is green.
+
+**Still open from §6/§9:** the two tests in §7; the `flotilla-*` module decision (needs an ADR
+amending ADR-0003 — the module graph is on `CLAUDE.md`'s "never without being asked" list);
+and where this file itself should live once its decisions are absorbed.
+
+**Next:** §7's two tests, then M5.
+
+---
+
 **This weekend:** W0, items 1–6 (§6). Nothing here is engineering; all of it changes how the
 repo reads.
 
