@@ -79,9 +79,30 @@ Specifically:
   fragment header, CRC32C per fragment, `FULL`/`FIRST`/`MIDDLE`/`LAST` — exactly as ADR-0007
   defines for the WAL, with its own magic and its own `FORMAT_VERSION`. Only the *payload*
   differs: a WAL payload is one mutation, a manifest payload is one `VersionEdit`.
-- **A `VersionEdit` payload carries** the comparator name (first edit only), the next file
-  number, the last sequence number, the log number below which WAL segments are obsolete, the
-  files added, and the files deleted.
+- **A `VersionEdit` payload is a sequence of tagged fields**, LevelDB's encoding: a varint tag,
+  then that tag's value, repeated until the payload is exhausted. Absent tags mean "unchanged".
+
+  | Tag | Field | Encoding |
+  |---|---|---|
+  | 1 | comparator name | varint length + UTF-8 bytes (written in the first edit of a manifest) |
+  | 2 | log number | varint — WAL segments numbered below this are covered by a flush and obsolete |
+  | 3 | next file number | varint |
+  | 4 | last sequence | varint |
+  | 5 | deleted file | varint level, varint file number |
+  | 6 | added file | varint level, varint file number, varint size in bytes, varint+bytes smallest internal key, varint+bytes largest internal key |
+
+  **An unknown tag is `CorruptionException`, never a skipped field.** A manifest is a
+  description of which files exist; silently ignoring a field could silently drop a file, and
+  N4 forbids continuing past something we do not understand. This makes the format explicitly
+  *not* forward compatible, which is the correct trade here (on-disk-formats.md §3).
+
+- **An added file records its level and key range from the start**, even though M5 has neither
+  levels nor a use for the range: level is always 0 until M6, and the smallest and largest keys
+  are already known to the writer at flush time, so nothing has to be computed to fill them.
+  M6's file picking needs all five fields, and writing them now costs one varint and two keys
+  per file while the format is new and no database exists to migrate. The alternative — a
+  minimal v1 followed by a v2 bump at M6 — would spend the full §3 procedure (version bump,
+  second golden file, compatibility stance) on a change we can see coming from here.
 - **`CURRENT` contains one line**: the manifest's file name. It is written to `CURRENT.tmp`,
   fsynced, and atomically renamed. A database with no `CURRENT` is a new database; a `CURRENT`
   naming a file that does not exist is corruption, not an empty database.
@@ -94,6 +115,12 @@ Specifically:
 - **The comparator name is checked on open** and a mismatch throws with both names.
 - **The recovery-flush goes away.** Replayed records go into the active memtable and stay
   there; the segments that fed them are dropped only once a real flush covers them.
+- **Every open rewrites the manifest**, beginning the new one with a full snapshot of the
+  current version — one added-file record per live table — and then pointing `CURRENT` at it.
+  Growth is therefore bounded by the edits of a single run rather than by the lifetime of the
+  database, and replay on open stays proportional to the live file set. It also exercises the
+  snapshot-at-head path on every start, which is the same path M6 needs for rewriting a manifest
+  that has grown large mid-run; a code path taken on every open is one that cannot rot.
 
 ## Rationale
 
@@ -126,13 +153,18 @@ unblocks compaction. Recovery stops mutating the database. A wrong comparator is
 than silently mis-ordering. Replay is bounded by the log number instead of replaying every
 segment present.
 
-**Negative.** A third on-disk format to version, document and golden-test. Two new failure
-modes to test deliberately: a torn edit at the manifest tail, and a `CURRENT` that names a
-missing file. The manifest grows without bound until M6 adds rewrite-on-open or
-rewrite-when-large; at M5 it is bounded only by the number of flushes, which is acceptable and
-must be written down rather than forgotten. Reference counting moves from "hygiene" to
-"correctness" — a leaked reference is now a leaked file, and an over-release is a use-after-free
-on a channel.
+**Negative.** A third on-disk format to version, document and golden-test. Three new failure
+modes to test deliberately: a torn edit at the manifest tail, a `CURRENT` naming a missing file,
+and a crash *during* the open-time rewrite — which is survivable precisely because `CURRENT`
+still names the old manifest until the rename lands, but is only survivable if that ordering is
+tested rather than assumed. Rewriting on every open makes opening a database a write, which is
+mildly surprising and must be stated in `open`'s Javadoc. Reference counting moves from
+"hygiene" to "correctness" — a leaked reference is now a leaked file, and an over-release is a
+use-after-free on a channel.
+
+Within a single long run the manifest still grows unbounded; rewrite-*when-large* is deferred to
+M6, where compaction makes the rate high enough to matter and there is a benchmark to size the
+threshold against.
 
 **Neutral.** The engine gains a `Version`/`VersionSet` vocabulary that mirrors LevelDB's, which
 makes the code easier to compare against the reference and harder to read for anyone who has
