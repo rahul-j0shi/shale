@@ -1,6 +1,6 @@
 # 0012. Record the live file set in a manifest log of version edits
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-07
 - **Milestone:** M5
 - **Reversible:** no — the manifest is a new on-disk format, and `CURRENT` fixes how a database is discovered. A database written by this version cannot be opened by an M4 binary.

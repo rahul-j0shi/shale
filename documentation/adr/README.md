@@ -45,6 +45,6 @@ next week, or anything already decided by an existing ADR.
 | 0009 | Skiplist memtable: single writer, lock-free readers, on-heap | Accepted | partly |
 | 0010 | SSTable on-disk format: a LevelDB block table, uncompressed | Accepted | **no** |
 | 0011 | Read through one InternalIterator seam, merged by a heap, pinned by the cursor | Accepted | partly |
-| 0012 | Record the live file set in a manifest log of version edits | Proposed | **no** |
+| 0012 | Record the live file set in a manifest log of version edits | Accepted | **no** |
 
 Keep this table current in the same commit that adds the ADR.
