@@ -1,8 +1,8 @@
 # Architecture — as-built detail
 
-The top-level [README](../../README.md#architecture--the-complete-project-scope) draws the
-**complete project scope** — the whole system, built and planned, in four overview diagrams
-(modules, the engine, Flotilla, verification).
+[project-scope.md](project-scope.md) draws the **complete project scope** — the whole system,
+built and planned, in four overview diagrams (modules, the engine, Flotilla, verification).
+The top-level [README](../../README.md) keeps only the status table and the module graph.
 
 This folder holds the finer-grained **as-built** designs: the actual types and flows that
 exist in the code, milestone by milestone. Unlike the roadmap (which describes intent) these
@@ -20,6 +20,10 @@ Every page answers the same three questions, in order:
 3. **Low-level design, LLD (§3)** — *how it works from first principles*: the classes, byte
    layouts, state machines, and concurrency reasoning behind those flows.
 4. **What proves it (§4)** — the tests that pin each behaviour.
+
+| Page | | |
+|---|---|---|
+| [project-scope.md](project-scope.md) | The complete component scope, built and planned — modules, engine, Flotilla, verification | |
 
 | Milestone | Doc | HLD | LLD |
 |---|---|---|---|

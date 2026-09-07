@@ -4,17 +4,18 @@ Everything written about Shale and Flotilla lives here. This page is the door: i
 of document is for and the order to read them in. The standard these docs are held to — teach, don't
 just record — is [`conventions/documentation.md`](conventions/documentation.md).
 
-If you read nothing else, read the [top-level README](../README.md) for the mission and the
-whole-system diagram, then come back here.
+If you read nothing else, read the [top-level README](../README.md) for the mission and current
+status, then come back here.
 
 ---
 
 ## Start here
 
-1. **[README](../README.md)** — what the project is, why it exists, and the complete architecture at
-   a glance (built vs. planned).
+1. **[README](../README.md)** — what the project is, why it exists, and an honest built-vs-planned
+   status table. The full scope diagrams are in
+   [architecture/project-scope.md](architecture/project-scope.md).
 2. **[roadmap/shale-roadmap.md](roadmap/shale-roadmap.md)** — the charter: goals, non-goals, the RUM
-   tradeoff at the heart of it, and the milestone build order (M0 → M11).
+   tradeoff at the heart of it, and the milestone build order (M0 → M10; M11 is a non-goal).
 3. **A milestone, end to end** — pick one and read its three faces: the **decision** (`adr/`), the
    **as-built** explainer (`architecture/`), and, for on-disk work, the **byte layout**
    (`<package>/format.md`). M3 is a good example: [ADR-0010](adr/0010-sstable-block-table-format.md) →
