@@ -132,12 +132,13 @@ Each milestone yields a working, testable artifact. Dependencies flow downward.
 - **M3 — SSTable write + flush.** Serialize an immutable memtable to an SSTable (data blocks, restart points, block index, footer). Reads now check memtable then one SSTable. *Depends on M2.*
 - **M4 — Multi-SSTable reads + merge iterator.** Heap-based multi-way merge across memtable + many SSTables; reconciliation + tombstones. *Depends on M3.*
 - **M5 — Manifest + recovery hardening.** Version edits, atomic version install, CURRENT file, reference-counted file lifecycle, full crash-recovery tests. *Depends on M4.*
-- **M6 — Compaction.** Start with size-tiered (simpler) or leveled; add scoring, file picking, background threads, write stalls, trivial move. *Depends on M5.*
+- **M5.5 — Concurrent write path.** Shorten the write critical section: WAL append and sequence assignment under the lock, `force()` outside it, leader/follower group commit (finally honouring `Durability.GROUP`), and flush moved to an injected background executor with a bounded immutable-memtable queue and write stalls. *Depends on M5; blocks M6.* Added after M4: the M3-era synchronous flush holds `writeLock` across an fsync, which forecloses both group commit and background compaction, so this is a prerequisite rather than an optimisation.
+- **M6 — Compaction.** Start with size-tiered (simpler), then leveled, keeping both selectable so the amplification comparison is measurable; add scoring, file picking, background threads, write stalls, trivial move. Wire the WA/RA/SA counters here, not later. *Depends on M5.5.*
 - **M7 — Bloom filters + block/table cache + MVCC/snapshots.** Per-SSTable bloom (then Monkey-style allocation as a stretch); block cache; sequence-number snapshots + atomic write batches. *Depends on M6.*
-- **M8 — (Capstone comparison) COW B+Tree backend + full benchmark suite (YCSB/db_bench-style, JMH microbenchmarks).** *Depends on M7 + the M0 interface.*
+- **M8 — (Capstone comparison) COW B+Tree backend + full benchmark suite (YCSB/db_bench-style, JMH microbenchmarks).** *Depends on M7 + the M0 interface.* **Time-boxed to four weeks**: the deliverable is the measured comparison, not the tree. If the backend overruns, ship the harness and the LSM numbers and say what was not measured.
 - **M9 — Single Raft group replication.** Engine becomes the replicated state machine behind Raft (election, log replication, snapshot = engine snapshot). *Depends on M7.*
 - **M10 — Multi-Raft sharding + placement/metadata service + routing.** Range partitions, split/merge, PD-like metadata + TSO. *Depends on M9.*
-- **M11 — Percolator distributed transactions.** 2PC with primary-key coordinator, TSO timestamps, lock/write column families. *Depends on M10.*
+- **M11 — Percolator distributed transactions.** **Non-goal.** 2PC with a primary-key coordinator, TSO timestamps and lock/write column families is the natural next step after M10 and is recorded here so the shape is known — but it is out of scope for this project and is not drawn in the architecture diagrams. Reinstate it only if M10 ships and there is appetite left.
 
 ### F. Java-specific considerations
 

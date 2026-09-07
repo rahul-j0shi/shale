@@ -79,10 +79,10 @@ M4; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build shells
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M8: manifest · compaction .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M8: manifest · write path · compaction .. B+Tree"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
-    server["flotilla-server — RPC / sharding / PD · M10-M11<br/>build shell (no source yet)"]:::plan
+    server["flotilla-server — RPC / sharding / PD · M10<br/>build shell (no source yet)"]:::plan
   end
   server -->|implementation| raft
   server -->|implementation| core
@@ -192,8 +192,8 @@ flowchart TB
 ### 3 · Flotilla — the distributed store (full component scope)
 
 The engine becomes the replicated state machine behind Raft; a router and placement driver
-shard the key space into Regions, each its own Raft group; Percolator adds distributed
-transactions. All planned (M9–M11); the state machine is the M0 engine.
+shard the key space into Regions, each its own Raft group. All planned (M9–M10); the state
+machine is the M0 engine. Percolator (M11) is a non-goal and is not drawn.
 
 ```mermaid
 flowchart TB
@@ -212,8 +212,6 @@ flowchart TB
     fol["Peer · followers (majority commits)"]:::plan
   end
 
-  txn["Percolator distributed txn M11<br/>TSO startTS / commitTS · 2PC primary-key coordinator · lock / data / write columns"]:::plan
-
   client --> rpc
   rpc --> router
   router -. locate region .-> pd
@@ -223,8 +221,6 @@ flowchart TB
   fol -->|ack| rlog
   rlog -->|commit on majority| sm
   peer -. "InstallSnapshot = engine Snapshot" .-> fol
-  pd -->|timestamps| txn
-  txn --> router
   pd -. "rebalance / split / merge" .-> region
   fd -. suspect .-> region
 
@@ -241,12 +237,12 @@ flowchart LR
     modelt["Model vs TreeMap ✓ M0"]:::done
     prop["Property · jqwik ✓ M0"]:::done
     crash["Crash · FaultyFileSystem M5"]:::plan
-    soak["Soak M6+"]:::plan
+    soak["Soak M6"]:::plan
     dst["Deterministic simulation · seeded M9"]:::plan
     fuzz["Fuzzing · WAL/SSTable parsers M3+"]:::plan
     jep["Jepsen linearizability M9+"]:::plan
   end
-  bench["Benchmarks · shale-bench<br/>JMH ✓ wired · YCSB A-F · db_bench (fillseq/fillrandom/readrandom/seekrandom) M8<br/>RUM: LSM vs COW B+Tree M8"]:::plan
+  bench["Benchmarks · shale-bench<br/>JMH plugin wired, no benchmarks written yet · YCSB A-F · db_bench (fillseq/fillrandom/readrandom/seekrandom) M8<br/>RUM: LSM vs COW B+Tree M8"]:::plan
   target["Shale engine + Flotilla cluster"]
   tiers --> target
   bench --> target
@@ -274,12 +270,13 @@ Strictly ordered; each milestone ends in a runnable, tested artifact.
 | **M3** | SSTable write + flush | Data blocks, restart points, block index, footer |
 | **M4** | Multi-SSTable reads | Heap-based multi-way merge, reconciliation, tombstones |
 | **M5** | Manifest + recovery hardening | Version edits, atomic install, CURRENT, ref-counted lifecycle, crash tests |
+| **M5.5** | Concurrent write path | fsync outside the write lock, leader/follower group commit, background flush + write stalls |
 | **M6** | Compaction | Size-tiered then leveled; scoring, file picking, background threads, write stalls |
 | **M7** | Filters, cache, MVCC | Per-SSTable bloom, block/table cache, sequence-number snapshots, atomic batches |
-| **M8** | COW B+Tree capstone | Copy-on-write B+Tree backend + full benchmark suite — the RUM tradeoff, measured |
+| **M8** | COW B+Tree capstone | Copy-on-write B+Tree backend + full benchmark suite — the RUM tradeoff, measured (time-boxed: the comparison is the deliverable) |
 | **M9** | Single Raft group | Engine as replicated state machine (snapshot = engine snapshot) |
 | **M10** | Multi-Raft sharding | Range partitions, split/merge/rebalance, PD-like metadata + TSO, routing |
-| **M11** | Distributed transactions | Percolator 2PC with primary-key coordinator and TSO timestamps |
+| ~~M11~~ | ~~Distributed transactions~~ | Percolator 2PC — **non-goal**, recorded in the charter for shape only |
 
 Full charter, component inventory, citations, and effort estimates:
 [`documentation/roadmap/shale-roadmap.md`](documentation/roadmap/shale-roadmap.md).
