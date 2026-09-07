@@ -31,6 +31,7 @@ status, then come back here.
 | **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
 | **Conventions** | *What are the rules?* Naming, style, commits, concurrency, formats, errors, testing, docs. | [conventions/](conventions/) |
 | **`format.md`** | *What exactly is on disk?* Byte tables + worked hex, beside the code, pinned by golden files. | e.g. [wal](../shale-core/src/main/java/dev/shale/wal/format.md), [sstable](../shale-core/src/main/java/dev/shale/sstable/format.md) |
+| **Assessments** | *Where does the project actually stand?* Dated whole-project reviews: verified findings and what to do next. | [assessments/](assessments/) |
 
 ## How a milestone's docs fit together
 

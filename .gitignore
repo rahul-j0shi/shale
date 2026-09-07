@@ -43,3 +43,8 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent-harness configuration. Local tooling, not part of the project: it describes how a
+# particular assistant is driven, which is noise to anyone reading the engine.
+.claude/
+opencode.json

@@ -79,8 +79,9 @@ Strictly ordered; each milestone ends in a runnable, tested artifact.
 
 Charter, component inventory and citations:
 [`documentation/roadmap/shale-roadmap.md`](documentation/roadmap/shale-roadmap.md). Percolator
-transactions (M11) are a recorded **non-goal**. A current assessment of the project — verified
-findings and the plan to completion — is in [`PROJECT-CRITIQUE.md`](PROJECT-CRITIQUE.md).
+transactions (M11) are a recorded **non-goal**. A dated assessment of the project — verified
+findings and the plan to completion — is in
+[`documentation/assessments/`](documentation/assessments/).
 
 ## Building
 
