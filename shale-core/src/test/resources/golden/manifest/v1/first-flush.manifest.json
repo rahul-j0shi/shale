@@ -1,0 +1,32 @@
+{
+  "format": "manifest",
+  "formatVersion": 1,
+  "description": "A manifest as it stands after a database's first flush (ADR-0012). Two edits: the opening edit that names the comparator, then the edit installing the flushed table. The file it describes is the SSTable golden fixture golden/sstable/v1/two-puts.sst — same file number, size, and key range — so the two fixtures tell one consistent story. See format.md §6 for the annotated bytes of the first record.",
+  "fileSizeBytes": 93,
+  "magic": "0x5368616C654D414E",
+  "edits": [
+    {
+      "comparatorName": "shale.BytewiseComparator",
+      "logNumber": 2,
+      "nextFileNumber": 3,
+      "lastSequence": 0,
+      "addedFiles": [],
+      "deletedFiles": []
+    },
+    {
+      "logNumber": 4,
+      "nextFileNumber": 5,
+      "lastSequence": 2,
+      "addedFiles": [
+        {
+          "level": 0,
+          "fileNumber": 3,
+          "sizeBytes": 132,
+          "smallest": { "userKey": "a", "sequence": 1, "type": "PUT" },
+          "largest": { "userKey": "b", "sequence": 2, "type": "PUT" }
+        }
+      ],
+      "deletedFiles": []
+    }
+  ]
+}

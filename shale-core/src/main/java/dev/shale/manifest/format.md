@@ -103,9 +103,25 @@ The file is 16 (header) + 7 (fragment header) + 32 = **55 bytes**, and `CURRENT`
 `000001.manifest\n`.
 
 The CRC is shown as `.. .. .. ..` deliberately: the committed golden fixture is the authority
-for it, not this table. See `shale-core/src/test/resources/golden/manifest/v1/`, whose `.json`
-sibling states the expected decode. A golden file is never regenerated to make a test pass
-(on-disk-formats.md §4).
+for it, not this table. That fixture is
+`shale-core/src/test/resources/golden/manifest/v1/first-flush.manifest` — 93 bytes, holding
+this edit followed by the one that installs a flushed table — and its `.json` sibling states
+the expected decode. The table it describes is the SSTable golden fixture, so the two tell one
+consistent story. A golden file is never regenerated to make a test pass (on-disk-formats.md
+§4).
+
+### A length field is not covered by its own checksum
+
+The CRC covers the type byte and the payload — it cannot cover the length, because the length
+is what says where the payload ends. A bit flipped in a length therefore makes a record claim
+more bytes than the file holds, which is indistinguishable from a crash mid-append.
+
+For the **first** record this is caught: `CURRENT` is renamed onto a manifest only after that
+manifest's first edit is durable, so a manifest anyone can reach holds at least one readable
+edit, and a file with bytes but no edit is `CorruptionException`. For a **later** record the
+history is silently truncated, presenting as an older version of the database rather than as an
+error. The defence against that lives outside the format: the file set a manifest describes is
+cross-checked against the directory, so a table recovery expects and cannot find is corruption.
 
 ## 7. Rationale
 
