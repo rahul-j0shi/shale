@@ -8,15 +8,18 @@ for advancing between milestones, and every one of them is a test result.
 
 ## 1. The five tiers
 
-| Tier | Tag | Runtime | Runs |
-|---|---|---|---|
-| Unit | (none) | < 10 s total | Every build |
-| Model | `@Tag("model")` | ~1 min | Every build |
-| Property | `@Tag("property")` | ~2 min | Every build |
-| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly |
-| Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag |
+| Tier | Tag | Runtime | Runs | Built |
+|---|---|---|---|---|
+| Unit | (none) | < 10 s total | Every build | ✅ M0 |
+| Model | `@Tag("model")` | ~1 min | Every build | ✅ M0 |
+| Property | `@Tag("property")` | ~2 min | Every build | ✅ M0 (untagged; runs in the default task) |
+| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); fault injection at M5 |
+| Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag | ❌ M6 — needs compaction to be worth running |
 
-`./gradlew build` runs the first three. `crashTest` and `soakTest` are separate tasks.
+`./gradlew build` runs the first three; `crashTest` is a separate task. **This section is a
+specification, not a status report** — the last column says what exists. Where a tier
+describes machinery that is not built (the `FaultyFileSystem` below, the soak workload),
+the milestone that builds it is named. Do not read an unbuilt tier as a claim.
 
 ### Unit
 Ordinary focused tests. Fast, no filesystem unless the class under test is about the
@@ -48,6 +51,9 @@ jqwik, with shrinking. Properties worth stating:
 - A bloom filter never returns a false negative. Ever, for any input.
 
 ### Crash
+*Partly built (M1): `ShaleCrashTest` truncates the WAL at every byte offset. The
+`FaultyFileSystem` below arrives at **M5**, with the manifest it needs to test.*
+
 Fault injection through a `FaultyFileSystem` wrapper that can, deterministically:
 kill at a chosen operation index, truncate a file at an arbitrary offset, write a
 partial (torn) record, fail an fsync, reorder writes not separated by an fsync, return
@@ -61,6 +67,10 @@ and truncate at *every* byte offset. Both spaces are small enough to enumerate a
 find real bugs immediately.
 
 ### Soak
+*Not built. Arrives at **M6**: without compaction there is no backlog to soak, and the
+engine would simply accumulate one SSTable per flush until the disk filled. The
+`soakTest` Gradle task is registered and currently selects no tests.*
+
 Hours of continuous mixed workload with periodic restarts, checked against the model,
 with memory and file-descriptor counts asserted flat. This is what finds the reference-
 counting leak and the compaction backlog that only appears after 40 minutes.

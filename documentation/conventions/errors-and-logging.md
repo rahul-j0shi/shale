@@ -57,6 +57,16 @@ compaction pipeline add noise without adding safety.
 
 ## 2. Logging
 
+**Status: not built, and not buildable in `shale-core` as written.** Nothing in the engine
+logs today. SLF4J is the intended facade, but `java-style.md` §1 permits it only in
+`flotilla-*`: `shale-core` has *zero* runtime dependencies, and adding one — even a facade —
+needs an ADR amending the allowlist. Until that ADR exists, this section governs `flotilla-*`
+and is a design target for the engine, not a rule it breaks. The engine's alternative is a
+tiny internal logging seam (the `Metrics` interface is the precedent) with the SLF4J binding
+supplied by the embedding application; decide it in the ADR, not here.
+
+The rules below apply wherever logging does exist.
+
 SLF4J as the facade. `shale-core` declares no binding — the application chooses.
 
 ### Levels

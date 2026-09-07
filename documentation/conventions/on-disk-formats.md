@@ -145,8 +145,8 @@ field numbers are never reused or renumbered, fields are added as optional and n
 made required, enums always carry an `UNKNOWN = 0` default, and every message is
 versioned by the service, not by ad hoc fields.
 
-The `.proto` files live in `flotilla-rpc/src/main/proto/` and are the authoritative
-definition. Do not hand-edit generated code.
+The `.proto` files live in `flotilla-server/src/main/proto/` and are the authoritative
+definition. Do not hand-edit generated code. (None exist yet; the RPC layer is M10.)
 
 Note the deliberate asymmetry: protobuf is permitted on the wire but banned for on-disk
 formats (`java-style.md` §1). The wire format is plumbing; the storage format is the

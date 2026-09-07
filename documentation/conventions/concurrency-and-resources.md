@@ -47,6 +47,17 @@ one thread" is precisely the claim the annotation exists to record.
 - **Never hold a lock across I/O.** The whole point of the LSM design is that the write
   path is short; blocking a memtable insert on an fsync serialises everything. Copy what
   you need under the lock, release, then do the work.
+
+  **Known deviation, M1–M5.** The engine's write path violates this rule today: `Shale.put`
+  holds `writeLock` across the WAL `force()`, and `switchAndFlush` holds it across an entire
+  SSTable write, fsync and rename. This was accepted deliberately — ADR-0010 chose a
+  synchronous flush so that M3 had one thread of control to reason about, and correctness
+  came before concurrency by design. The cost is real and understood: throughput is bounded
+  by fsync latency regardless of writer count, a flush stalls every writer for its whole
+  duration, and the leader/follower group commit ADR-0008 chose (option B2) is structurally
+  impossible while the force sits inside the lock. **M5.5 retires the deviation** — short
+  critical section, force outside it, flush on a background executor — and this paragraph
+  goes with it. Until then, do not cite the engine's write path as an example of this rule.
 - Prefer immutable snapshots over locks. The `Version` type is the canonical example:
   readers grab the current `Version` reference (one volatile read), and compaction
   installs a new one atomically. Readers never block on compaction.
@@ -148,9 +159,23 @@ ordering invariant in a comment at each site.
 **D4 — Never widen a guarantee, never narrow it silently.** Changing a default from
 `SYNC` to `NONE` is a breaking change and needs an ADR and a `Reversible: no` trailer.
 
-**D5 — Every durability claim has a crash test.** If the Javadoc says a write survives
-power loss, there is a test that kills the process at that point and asserts it did.
-An untested durability claim is a marketing claim.
+**D5 — Every durability claim has a crash test.** An untested durability claim is a
+marketing claim.
+
+Be precise about which failure model a test actually covers, because the two are not the
+same and one is much easier to test than the other:
+
+| Model | What fails | How we cover it |
+|---|---|---|
+| **Process crash** | The process dies; the page cache survives | Directly tested — truncate the WAL at every offset, reopen, assert the recovered prefix |
+| **Power loss** | The machine loses power; anything not `force()`d is gone, including the device write cache | *Asserted by construction*, not tested — we fsync before acknowledging and rely on `FileChannel.force` reaching stable storage |
+
+Killing a process proves the first and says nothing about the second: a `write()` that never
+reached the disk still survives `kill -9` because the page cache outlives the process. So a
+claim of power-loss durability rests on the ordering argument (`force()` before ack, D3), and
+the crash test's job is to prove the *recovery* logic handles every truncation point. Say
+which of the two a test covers; never let a process-crash test stand in for a power-loss
+claim.
 
 ---
 
