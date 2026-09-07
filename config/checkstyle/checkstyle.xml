@@ -155,8 +155,9 @@
                        java.util.Hashtable, java.lang.StringBuffer"/>
     </module>
 
-    <!-- Banned dependencies (java-style.md §1). CI also checks the resolved graph;
-         this catches it at the point of writing. -->
+    <!-- Banned dependencies (java-style.md §1). The build also resolves shale-core's
+         runtime graph and fails if it is non-empty (verifyNoRuntimeDependencies); this
+         catches a banned import at the point of writing, in any module. -->
     <module name="IllegalImport">
       <property name="illegalPkgs"
                 value="com.google.common, com.github.benmanes.caffeine, org.ehcache,

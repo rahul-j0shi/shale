@@ -1,5 +1,7 @@
 # Shale &nbsp;·&nbsp; Flotilla
 
+[![build](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml/badge.svg)](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml)
+
 A hand-written **LSM-tree storage engine** (`Shale`) and the **Raft-replicated,
 range-sharded distributed store** built on top of it (`Flotilla`) — implemented from
 first principles in Java, with no third-party library for any core mechanism.

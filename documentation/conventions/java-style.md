@@ -15,7 +15,10 @@ The prime directive (see `CLAUDE.md` §1) is that core mechanisms are hand-writt
 This is the enforcement mechanism.
 
 **`shale-core` runtime dependencies: none.** The engine compiles against the JDK and
-nothing else. This is not an aspiration; it is checked in CI.
+nothing else. This is not an aspiration and not an honour system: the
+`verifyNoRuntimeDependencies` task resolves the module's runtime graph and fails the build
+if anything is on it. It is wired into `check`, so `./gradlew build` enforces it locally and
+`.github/workflows/build.yml` enforces it on every push.
 
 **Permitted, `shale-core` test scope only:**
 `junit-jupiter`, `assertj-core`, `jqwik` (property-based testing), `jmh-core` and

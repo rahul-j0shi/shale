@@ -62,7 +62,9 @@ reader would be surprised by. Two sentences beats none; four beats twelve.
 
 ## 2. Trailers
 
-Trailers are how this repo stays navigable. They are grepable, and CI checks them.
+Trailers are how this repo stays navigable, and they are grepable. Applying them is a
+discipline, not a gate: nothing rejects a commit that omits one, so the cost of a missing
+`Format-Change:` is paid later by whoever is bisecting a corrupt file.
 
 ```
 Milestone: M6

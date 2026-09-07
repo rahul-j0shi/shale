@@ -47,7 +47,10 @@ Raft, sharding, distributed transactions — is implemented from first principle
 repository, with no third-party implementation of that concept present even transitively.
 
 `shale-core` carries zero runtime dependencies. The allowlist and the ban list live in
-`documentation/conventions/java-style.md` §1 and are enforced in CI.
+`documentation/conventions/java-style.md` §1, and are enforced two ways: Checkstyle rejects a
+banned import in any module, and `verifyNoRuntimeDependencies` resolves `shale-core`'s runtime
+graph and fails if it is non-empty — which is what catches a *transitive* arrival. Both run in
+`./gradlew build` and in `.github/workflows/build.yml`.
 
 General-purpose JDK facilities that are not project subjects (`ArrayDeque`,
 `ReentrantLock`, `CompletableFuture`, `MemorySegment`) are used freely.

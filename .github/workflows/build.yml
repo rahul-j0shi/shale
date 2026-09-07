@@ -1,0 +1,61 @@
+# The build gate, run on every push and pull request.
+#
+# java-style.md §1, ADR-0002 and commits.md all assert that the rules below are "checked in
+# CI". This workflow is what makes that true: the same tasks a contributor runs locally,
+# on a clean machine, with no vendored toolchain to hide behind.
+#
+# The repo's local toolchain is the JDK vendored in .tools/ (see scripts/env.sh), which is
+# gitignored and therefore absent here. setup-java installs Temurin 25 and exports
+# JAVA_HOME; Gradle's toolchain detection finds it there, which is why
+# org.gradle.java.installations.auto-download=false can stay off — CI never downloads a JDK
+# behind our back either.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['m*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build + crashTest (JDK 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # build = compile + spotlessCheck + checkstyle + javac -Werror + the fast tiers
+      # (unit, model, property). crashTest is tagged out of `build` and run separately,
+      # per testing.md §1.
+      - name: Build (format, lint, compile, fast tests)
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Crash-recovery suite
+        run: ./gradlew crashTest --no-daemon --stacktrace
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/**'
+          retention-days: 7
