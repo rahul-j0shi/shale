@@ -4,10 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,10 +28,8 @@ class ShaleMemtableSwitchTest {
       }
       assertThat(metrics.counter("memtable.switch.count")).isGreaterThan(0);
     }
-    // At M3 each switch flushes to an SSTable and reclaims the frozen segment; only the active
-    // segment remains, and tables exist on disk. (Segment-count detail is covered in
-    // ShaleFlushTest.)
-    assertThat(walSegments()).isNotEmpty();
+    // Segment and table counts after a flush are asserted in ShaleFlushTest; this test owns only
+    // the switch itself.
   }
 
   @Test
@@ -78,12 +73,6 @@ class ShaleMemtableSwitchTest {
 
   private Shale open(RecordingMetrics metrics) throws IOException {
     return Shale.open(dir, Clock.system(), metrics, TINY_BUFFER_BYTES);
-  }
-
-  private List<Path> walSegments() throws IOException {
-    try (Stream<Path> entries = Files.list(dir)) {
-      return entries.filter(p -> p.getFileName().toString().endsWith(".wal")).sorted().toList();
-    }
   }
 
   private static byte[] key(int i) {

@@ -107,8 +107,9 @@ flowchart LR
   dir --> list --> replay --> decode --> add --> newseg --> engine
 ```
 
-At M1 there is exactly one segment per run and no flush, so recovery replays the whole history; from
-M3 the manifest will bound replay to segments newer than the last flush.
+At M1 there is exactly one segment per run and no flush, so recovery replays the whole history. M3's
+flush deletes a segment once its data is in an SSTable, which bounds replay in practice; the manifest
+that makes the bound explicit — replay only what is newer than the last flush — arrives at M5.
 
 ### 2.3 The read path — newest-first, merge-and-hide
 

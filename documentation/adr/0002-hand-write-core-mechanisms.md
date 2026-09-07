@@ -1,7 +1,7 @@
 # 0002. Hand-write all core storage mechanisms
 
 - **Status:** Accepted
-- **Date:** (fill in)
+- **Date:** 2026-07-20
 - **Milestone:** M0
 - **Reversible:** no — reversing it removes the project's reason to exist
 
