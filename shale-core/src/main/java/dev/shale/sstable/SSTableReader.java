@@ -12,6 +12,7 @@ import dev.shale.iterator.ReferenceCounted;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
@@ -44,6 +45,13 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
   private final KeyComparator comparator;
   private final Block indexBlock;
   private final AtomicInteger references = new AtomicInteger(1);
+
+  /**
+   * Set once this table leaves the live file set; read by the last {@link #release}. Written by the
+   * version-install path and read by whichever thread happens to drop the final reference, hence
+   * volatile.
+   */
+  private volatile boolean obsolete;
 
   private SSTableReader(
       Path path,
@@ -118,14 +126,35 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     references.incrementAndGet();
   }
 
-  /** Drops a reference; the last release closes the channel. */
+  /**
+   * Marks this table as no longer part of the live file set, so its file is deleted by the release
+   * that drops the last reference (ADR-0012, delete-on-zero).
+   *
+   * <p>Deleting immediately would be wrong: a cursor opened before the version that dropped this
+   * table may still be reading it, and on POSIX the unlinked file would survive for that reader but
+   * vanish for a reopen — a database that loses a table only if it crashes at the wrong moment. The
+   * reference count already knows when the last reader is finished; this only says what to do then.
+   *
+   * <p>Idempotent, and one-way: a table that has left the live set never rejoins it.
+   */
+  public void markObsolete() {
+    obsolete = true;
+  }
+
+  /**
+   * Drops a reference; the last release closes the channel, and deletes the file if this table has
+   * been {@link #markObsolete() marked obsolete}.
+   */
   @Override
   public void release() {
     if (references.decrementAndGet() == 0) {
       try {
         channel.close();
+        if (obsolete) {
+          Files.deleteIfExists(path);
+        }
       } catch (IOException e) {
-        throw new StorageException("closing SSTable " + path, e);
+        throw new StorageException("releasing SSTable " + path, e);
       }
     }
   }
