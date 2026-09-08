@@ -11,9 +11,13 @@
 # behind our back either.
 name: build
 
+# Every branch, not just main. This repository integrates finished branches into main
+# locally rather than through pull requests (commits.md §5.3), so gating only on main or on
+# a pull request would mean CI never sees a change until it has already landed — which is
+# the one moment the check is worth least.
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['m*']
   pull_request:
   workflow_dispatch:
