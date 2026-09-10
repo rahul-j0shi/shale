@@ -7,4 +7,5 @@ assessment supersedes an earlier one rather than editing it.
 
 | Date | Assessment | Verdict in one line |
 |---|---|---|
+| 2026-09-10 | [Current status and next steps](2026-09-10-project-status-and-next-steps.md) | M4 and prerequisite tests are built; proceed to M5 with explicit recovery, ownership and failure contracts |
 | 2026-09-07 | [Validated critique and completion plan](2026-09-07-project-critique.md) | The project is right and should not pivot; it was invisible and over-claiming, and the plan to completion is three separable products |
