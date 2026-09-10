@@ -83,7 +83,8 @@ M5 does not need a production compactor.
 
 - **Before M5.5:** small benchmark baseline in shale-bench for durable writes and reads during
   flush, recording commit, JDK, hardware and configuration; full comparative suite stays M8.
-- **M5.5:** define append/publish/durable watermarks, force leadership, rotation during force,
+- **M5.5:** see the [granular concurrent-write plan](m5.5-concurrent-write-path.md). Define
+  append/publish/durable watermarks, force leadership, rotation during force,
   mixed durability, error propagation, bounded flush queues, stalls and close draining.
   Prove batching with a controlled cohort; arbitrary scheduling need not batch requests.
 - **M6:** one correct compaction policy first, then the second for measured comparison. Define

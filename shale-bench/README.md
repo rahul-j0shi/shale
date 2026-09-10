@@ -8,7 +8,7 @@ The JMH plugin is applied and `shale-core` is on the benchmark classpath, so
 and nothing in the engine has been optimised yet: correctness first, measurement second,
 optimisation third. There has been nothing worth measuring that a microbenchmark would answer.
 
-**When that changes.** The first benchmarks arrive alongside compaction (M6), because
-write/read/space amplification counters are what make the RUM tradeoff — the project's stated
-thesis — measurable instead of asserted. M8 adds the YCSB A–F and db_bench-style macro
-workloads and runs them across both backends.
+**When that changes.** A small durable-write/read-during-flush baseline arrives after M5 and
+before M5.5's concurrency changes; see the [M5.5 plan](../documentation/roadmap/m5.5-concurrent-write-path.md).
+M6 adds write/read/space amplification measurements. M8 adds YCSB A–F and db_bench-style
+macro workloads and the backend comparison.
