@@ -39,10 +39,6 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `BlockHandle` | `Pointer`, `Ref` | `{offset, size}` locator inside a file |
 | `Footer` | `Trailer`, `Header` | Fixed-size tail of an SSTable |
 | `BloomFilter` | `Filter` alone | Probabilistic membership filter |
-| `Region` | `Shard`, `Partition`, `Range` | A range-partitioned unit of data (Flotilla) |
-| `RaftGroup` | `Cluster`, `Quorum` | The replica set owning one Region |
-| `Peer` | `Node`, `Server`, `Replica` | One member of a RaftGroup |
-| `Store` | `Instance` | One Flotilla process holding many Regions |
 | **ShaleDB** (D1+, ADR-0013) | | *The relational layer above the engine* |
 | `Catalog` | `Dictionary`, `SchemaRegistry`, `Metadata` | ShaleDB's registry of table and index descriptors, stored in the system keyspace. Never the engine's `Manifest` |
 | `TableDescriptor` / `IndexDescriptor` | `TableInfo`, `TableMeta`, `Schema` alone | The catalog entry for one table / one index |
@@ -55,11 +51,11 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `Transaction` | `Txn` in identifiers | A ShaleDB unit of serializable work (D4) |
 | `ReadSet` / `WriteSet` | `Reads`, `Buffer` | Keys and ranges a transaction read / mutations it will commit |
 | `Session` | `Connection` (server side) | One client's state on the server: current transaction, settings |
-| `ShaleDbServer` | `Server` alone, `Node` | The single-node ShaleDB server process (D5) |
+| `ShaleDbServer` | `Server` alone, `Node` | The ShaleDB server process speaking the PostgreSQL protocol (D5) |
+| compaction debt | `backlog`, `pending work` | Bytes a write will cost later in compaction; RocksDB calls the engine-wide total *pending compaction bytes* |
 
-`Node`, `Server`, and `Replica` are banned as type names precisely because they are the
-words people reach for by reflex; they mean three different things across the Raft,
-sharding, and RPC layers and blur together immediately. Use `Peer`, `Store`, `Region`.
+`Node` and `Server` are banned as bare type names because they are the words people reach for by
+reflex and mean nothing specific: a plan has `Operator`s, the process is `ShaleDbServer`.
 
 When you add a concept, add it here in the same commit.
 
@@ -100,25 +96,21 @@ There is exactly one exception. Do not add a second without an ADR.
 
 ## 3. Packages
 
-Root: `dev.shale` and `dev.flotilla`. Substitute your own reverse-DNS if you own one;
-choose once, it is hard to reverse.
+Root: `dev.shale`. Substitute your own reverse-DNS if you own one; choose once, it is hard to
+reverse.
 
 ```
-dev.shale.wal            dev.flotilla.raft
-dev.shale.memtable       dev.flotilla.raft.log
-dev.shale.sstable        dev.flotilla.region
-dev.shale.compaction     dev.flotilla.rpc
-dev.shale.filter         dev.flotilla.pd
-dev.shale.manifest
-dev.shale.iterator
-dev.shale.cache
-dev.shale.internal       ← not public API; see below
-
-dev.shale.db.type        dev.shale.db.plan         ← shale-db (D1–D4)
-dev.shale.db.record      dev.shale.db.exec
-dev.shale.db.catalog     dev.shale.db.txn
-dev.shale.db.table       dev.shale.db.sql
-dev.shale.server         dev.shale.demo            ← shale-server (D5), shale-demo (D6)
+dev.shale.wal            dev.shale.db.type          ← shale-db (D1–D6)
+dev.shale.memtable       dev.shale.db.record
+dev.shale.sstable        dev.shale.db.catalog
+dev.shale.compaction     dev.shale.db.table
+dev.shale.filter         dev.shale.db.sql
+dev.shale.manifest       dev.shale.db.plan
+dev.shale.iterator       dev.shale.db.exec
+dev.shale.internal       dev.shale.db.txn
+  ← not public API       dev.shale.db.cost
+                         dev.shale.server           ← shale-server (D5)
+                         dev.shale.demo             ← shale-demo (D7)
 ```
 
 **Package by feature, not by layer.** No `util`, `helpers`, `common`, `misc`, `base`,

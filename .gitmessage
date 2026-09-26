@@ -18,8 +18,8 @@
 #
 # --- scopes ---
 # wal memtable sstable compaction filter manifest iterator cache mvcc
-# recovery api bench raft region rpc pd docs build
-# record catalog sql plan exec txn server demo btree
+# recovery api bench docs build
+# record catalog sql plan exec txn cost pgwire demo
 #
 # Reminders:
 #   - one logical change per commit; it must build on its own

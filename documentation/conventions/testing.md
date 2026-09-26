@@ -108,10 +108,9 @@ suite to produce.
   tests use a deterministic executor that runs tasks on demand, so a test can say
   "flush now, then compact once, then read" instead of waiting and hoping.
 
-This discipline is also the on-ramp to deterministic simulation testing
-(FoundationDB-style) for the Flotilla layer at M9. If the engine is already clock-,
-random-, and executor-injected, simulation is an extension rather than a rewrite.
-Design for it now even if you never build it.
+The same discipline is what lets the M5 crash tests run the engine over a simulated
+filesystem (FoundationDB-style): if the engine is already clock-, random-, and
+executor-injected, simulation is an extension rather than a rewrite.
 
 ---
 
@@ -170,8 +169,8 @@ Benchmarks live in `shale-bench`, run through JMH, and never run in the normal b
   that are wrong by an order of magnitude because of dead-code elimination and
   constant folding.
 - Macro workloads mirror recognisable names so results are comparable to published
-  numbers: `fillseq`, `fillrandom`, `readrandom`, `readwhilewriting`, `seekrandom`,
-  and YCSB A–F.
+  numbers: `fillseq`, `fillrandom`, `readrandom`, `readwhilewriting`, `seekrandom`.
+  Reference baselines (RocksDB, SQLite) run the same workloads (ADR-0013).
 - Every benchmark run records: commit SHA, JDK version, hardware, and full engine
   configuration. A number without its configuration is not a result.
 - Benchmark results referenced in a `perf` commit are committed under

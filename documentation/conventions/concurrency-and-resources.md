@@ -67,7 +67,7 @@ one thread" is precisely the claim the annotation exists to record.
 ## 3. Threads
 
 - Every thread and executor has a descriptive name: `shale-flush-0`,
-  `shale-compact-2`, `flotilla-raft-tick`. An unnamed thread in a stack dump at 3am
+  `shale-compact-2`, `shale-pg-session-7`. An unnamed thread in a stack dump at 3am
   is a wasted hour.
 - No unbounded thread pools. Compaction and flush pools are explicitly sized and that
   size is a documented configuration knob with a stated default and rationale.

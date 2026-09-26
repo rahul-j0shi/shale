@@ -17,8 +17,9 @@ split a topic across two, never invent a parallel system.
 |---|---|---|
 | `documentation/adr/NNNN-*.md` | a **decision** — the forces, the options, why one won, what it costs | before the code it decides |
 | `<package>/format.md` | an **exact byte layout** — table, worked hex example, golden-pinned CRCs | before the encoder (on-disk-formats.md §1) |
-| `documentation/architecture/mN-*.md` | the **as-built explainer** — how the shipped code actually works, as HLD/LLD with diagrams | alongside the code, same milestone |
-| `documentation/roadmap/` | **intent** — the charter, the plan for a milestone, and its release note | plan before, release note after |
+| `documentation/architecture/<milestone>-*.md` | the **as-built explainer** — how the shipped code actually works, as HLD/LLD with diagrams | alongside the code, same milestone |
+| `documentation/roadmap/` | **intent** — the charter (why and scope), the completion plan, a plan per milestone | plan before the milestone starts |
+| `CHANGELOG.md` | **what shipped** — one short entry per finished milestone | when the milestone is tagged |
 | `package-info.java` | a **package's** purpose, threading model, and entry point | with the package |
 | Javadoc + `// comments` | a **type's** contract and its source citation (N9) | with the type |
 
@@ -53,7 +54,7 @@ diagram than as a paragraph. Use one when it earns its place — and not when a 
 
 - Docs describe **what is true now**. When behaviour changes, its doc changes in the *same commit* —
   a stale explanation is a bug. The `architecture/` docs in particular track the code, not the plan.
-- **Link liberally.** Cross-reference the ADR, the `format.md`, the release note, and the source
+- **Link liberally.** Cross-reference the ADR, the `format.md`, the changelog, and the source
   (relative links, `file:line` where useful). A reader should never have to guess where the next
   piece lives.
 - Golden files and pinned CRCs are **never** edited to make prose match; if they disagree, the code
@@ -77,7 +78,8 @@ A milestone is not done until, in addition to green tests:
 
 - [ ] the **decision** is in an `adr/` record (accepted before the code landed),
 - [ ] any new byte layout has a **`format.md`** with a worked example and a golden file,
-- [ ] the **`architecture/mN-*.md`** as-built explainer exists, with rendered diagrams,
-- [ ] the **release note** and the **README status** are updated,
+- [ ] the **`architecture/<milestone>-*.md`** as-built explainer exists, with rendered diagrams,
+- [ ] the **changelog entry**, the **README status** and the completion plan's status table are
+      updated,
 - [ ] new `package-info` / Javadoc carry their **N9 citations**, and the **glossary** (naming.md §1)
       has any new term.
