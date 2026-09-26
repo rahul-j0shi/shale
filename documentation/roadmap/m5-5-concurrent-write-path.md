@@ -12,10 +12,10 @@ background executor with a bounded immutable-memtable queue and write stalls.
 
 ## Step 0 — benchmark baseline (before any change)
 
-The 2026-09-10 assessment requires a baseline before the write path moves. In `shale-bench`,
+A baseline must exist before the write path moves, or its effect cannot be shown. In `shale-bench`,
 add JMH benchmarks for: `fillseq` and `fillrandom` at `SYNC` and `NONE` with 1, 4 and 16 threads,
 `readrandom` over a flushed dataset, and reads during a flush. Record commit, JDK, CPU, disk,
-filesystem and configuration in the M5.5 release note. Raw JMH output is not committed
+filesystem and configuration in the M5.5 changelog entry. Raw JMH output is not committed
 (`commits.md` §3). These numbers become the "before" in every `Benchmark:` trailer.
 
 ## Decisions required in the ADR
@@ -25,10 +25,17 @@ ADR-0008 already chose leader/follower batching (B2). This ADR fixes the mechani
 1. **Writer queue.** Recommended: LevelDB's `DBImpl::Write`. Writers enqueue; the front writer
    becomes leader, merges queued requests up to a byte cap (RocksDB uses 1 MiB), assigns their
    sequence numbers, appends one WAL write, releases the lock for `force()` and the memtable
-   inserts, then wakes the followers. The memtable stays single-writer (ADR-0009): only the
-   leader inserts.
+   inserts, then wakes the followers.
+   - **One group in flight at a time.** The next leader waits until the previous group has
+     finished its inserts. That keeps the memtable single-writer, as ADR-0009 requires; while
+     one group forces, the next one forms behind it.
+   - **The leader switches the memtable.** When the memtable is full, the leader switches it
+     under the lock before appending (LevelDB's `MakeRoomForWrite`).
+   - **Queue order is sequence order.** A writer's place in the queue fixes its sequence
+     numbers. M7 exposes this as an asynchronous write, so ShaleDB (D4) can commit in its own
+     order and still share an fsync.
 2. **Watermarks.** Define *assigned*, *durable* and *visible* sequence numbers. Visible advances
-   only after every entry at or below it is in the memtable. M7a's snapshots read at the visible
+   only after every entry at or below it is in the memtable. M7's snapshots read at the visible
    watermark, so it is defined now even though `get` does not filter by it yet.
 3. **Mixed durability.** A group containing any `SYNC`/`GROUP` writer forces. `NONE` writers in
    a forced group get the stronger guarantee for free; they are never delayed to wait for one.
@@ -50,10 +57,13 @@ ADR-0008 already chose leader/follower batching (B2). This ADR fixes the mechani
 
 **In M5.5:** the writer queue and group commit; watermarks; background flush with the bounded
 queue and stalls; fail-stop semantics; draining close; metrics `wal.group.size`,
-`wal.force.count`, `write.stall.micros`, `flush.queue.depth`.
+`wal.force.count`, `write.stall.micros`, `flush.queue.depth`. Internally, each write records the
+size of its group and whether that group forced. M7 returns that to callers, and D6's
+`EXPLAIN ANALYZE` shows it as "fsync shared with N commits".
 
-**Deferred:** compaction and L0-count stalls (M6); atomic multi-key batches in the API (M7a —
-the internal group is not a user-visible batch); pipelined or parallel memtable writes.
+**Deferred:** compaction and L0-count stalls (M6); atomic multi-key batches and the asynchronous
+write in the API (M7 — the internal group is not a user-visible batch). Not planned: pipelined or
+parallel memtable writes.
 
 ## Task order (TDD; each task one commit, gate green)
 
@@ -68,9 +78,9 @@ the internal group is not a user-visible batch); pipelined or parallel memtable 
 7. Draining, idempotent `close()`; operations-after-close tests.
 8. Extend the model harness to run flushes on the deterministic executor at seeded points;
    extend `ShaleConcurrencyTest` for 16 writers with mixed durability.
-9. Benchmarks after the change; numbers into the release note with the baseline.
+9. Benchmarks after the change; numbers into the changelog entry with the baseline.
 10. Docs: engine `package-info`, the `architecture/m5-5-concurrent-write-path.md` as-built page
-    (writer-queue sequence diagram, watermark diagram), glossary, README status, release note.
+    (writer-queue sequence diagram, watermark diagram), glossary, README status, changelog.
 
 ## Acceptance gates
 
@@ -83,7 +93,7 @@ the internal group is not a user-visible batch); pipelined or parallel memtable 
 - **Stalls are bounded:** with flush paused, writers block at the queue bound and resume after
   one flush; no writer is acknowledged while blocked.
 - **Measured:** 16-thread `SYNC` throughput exceeds the step-0 baseline, reported with the
-  batch-size histogram. If it does not, the release note says why.
+  batch-size histogram. If it does not, the changelog entry says why.
 - Existing model, crash, format and concurrency tests stay green.
 
 ## References

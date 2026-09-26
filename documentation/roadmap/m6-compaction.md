@@ -14,7 +14,8 @@ This is the milestone after which the project may call itself an LSM engine.
 1. **Strategy order.** The charter suggested size-tiered first as simpler. **Recommended:
    leveled first**, because LevelDB's `version_set.cc` is the clearest reference, it is the
    configuration ShaleDB will run on, and it keeps point lookups at one file per level. Size-tiered
-   (Cassandra STCS) follows as the second, selectable policy for M8's comparison. The ADR states
+   (Cassandra STCS) follows as the second, selectable policy, so M8 and D7 can measure the
+   difference through the same workloads. The ADR states
    this deviation from the charter and why.
 2. **Level invariants.** L0 files may overlap and are ordered by their sequence ranges. Each of
    L1..Ln is one sorted run of non-overlapping files. Target sizes grow by a fanout (default 10);
@@ -30,7 +31,7 @@ This is the milestone after which the project may call itself an LSM engine.
    expand it to every overlapping file in the next level. Cut output files at the target file size and when
    grandparent overlap exceeds a limit.
 5. **What a compaction drops.** Keep the newest version of each user key; drop older versions.
-   Write the rule against a `smallestSnapshot` parameter (today: the latest sequence) so M7a only
+   Write the rule against a `smallestSnapshot` parameter (today: the latest sequence) so M7 only
    supplies the value. Drop a tombstone only when no level below the output can hold the key
    (LevelDB `IsBaseLevelForKey`); for size-tiered, only when no unselected run can hold it.
 6. **Trivial move.** A single input with no overlap in the next level moves by VersionEdit
@@ -48,9 +49,9 @@ This is the milestone after which the project may call itself an LSM engine.
 installing through VersionEdit, the new point-lookup order, L0 stalls, the amplification counters,
 and the soak tier.
 
-**Deferred:** snapshots and the snapshot-aware drop rule (M7a); range tombstones (stretch;
-ShaleDB's `DROP TABLE` uses batched point deletes); subcompactions; Dostoevsky lazy leveling;
-compaction rate limiting.
+**Deferred:** snapshots and the snapshot-aware drop rule (M7). **Not planned:** range tombstones
+(ShaleDB's `DROP TABLE` uses batched point deletes), subcompactions, lazy leveling, compaction rate
+limiting.
 
 ## Task order (TDD; each task one commit, gate green)
 
@@ -63,12 +64,14 @@ compaction rate limiting.
    append, input deletion); recovery yields a valid Version and no lost key.
 7. Model harness: seeded forced compactions between operations and across restarts.
 8. Amplification counters: `bytes.user.written`, `bytes.flush.written`,
-   `bytes.compaction.read/written`, tables probed per `get`, live versus logical bytes.
+   `bytes.compaction.read/written`, tables probed per `get`, live versus logical bytes, and
+   **compaction debt** — the estimated bytes compaction must still write, per level (RocksDB's
+   pending-compaction-bytes estimate). D6 attributes a share of it to each statement.
 9. Soak test (hours, tagged `soak`): mixed workload with restarts, checked against the model;
    asserts flat file-descriptor count, bounded L0 and bounded total files.
 10. `TieredCompactor` behind `ShaleOptions`, with its own tombstone rule and tests.
 11. Docs: `compaction/package-info`, `architecture/m6-compaction.md` (level diagram, a compaction
-    end to end, the drop-rule table), glossary, README status, release note with measured
+    end to end, the drop-rule table), glossary, README status, changelog entry with measured
     write amplification for both policies.
 
 ## Acceptance gates
@@ -84,7 +87,7 @@ compaction rate limiting.
 - **Crash-safe:** every compaction crash point recovers; obsolete inputs disappear only after
   the last reader releases them; no committed file is deleted.
 - **Counted:** amplification counters match hand-computed values on a small scripted scenario.
-- **Soak:** a 1-hour soak run is green before the tag; the release note records the command.
+- **Soak:** a 1-hour soak run is green before the tag; the changelog entry records the command.
 
 ## References
 

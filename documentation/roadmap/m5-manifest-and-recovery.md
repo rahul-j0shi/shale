@@ -1,12 +1,12 @@
 # M5 — Manifest and recovery: implementation plan
 
-**Status:** planning complete; implementation not started. Reviewed against `812f88c` on
-2026-09-10; baseline verified green on JDK 25 at `9cfa7d6` on 2026-09-26 (161 tests). **Depends
-on:** M4 and prerequisite tests already landed in `9780bfd` and `812f88c`. **Next after M5:**
-[M5.5](m5-5-concurrent-write-path.md), per the [completion plan](completion-plan.md).
+**Status:** next to implement. Baseline verified green on JDK 25 at `9cfa7d6` on 2026-09-26
+(161 tests). **Depends on:** M4. **Next after M5:** [M5.5](m5-5-concurrent-write-path.md), per the
+[completion plan](completion-plan.md).
 
-**Goal:** recover the committed live-file set from metadata, retain replayed data without an
-unconditional recovery flush, and reclaim obsolete files only after readers release them.
+**Goal:** recover the committed live-file set from durable metadata instead of a directory
+listing, and reclaim obsolete files only after readers release them. Without this no file can
+ever be deleted safely, so compaction (M6) is impossible.
 
 **Decision gate:** propose ADR-0012 and accept it before implementation. The following items
 are a decision checklist, not an accepted byte layout or public API change. New manifest bytes
@@ -44,8 +44,65 @@ require a versioned `format.md`, golden fixtures and `Format-Change:`.
    fixture can test persisted-name mismatch without adding a public comparator option solely
    for that test. Any API expansion needs an explicit decision.
 
-**Deferred:** group commit/background flush (M5.5), compaction (M6), filters/cache/snapshots/
-batches (M7), new modules and distributed work. Lifecycle tests may install test Versions;
+## Recommended positions for ADR-0012
+
+The ADR author confirms or overrides each; they are here so no question blocks the start.
+
+1. **Metadata:** LevelDB's `VersionEdit` fields, each tagged:
+   - comparator name;
+   - log number (the oldest WAL segment still needed);
+   - next file number and last sequence;
+   - per-level compaction pointer;
+   - deleted file (level, number);
+   - new file (level, number, size, smallest and largest internal key).
+
+   An unknown tag is corruption; a new field means a version bump.
+2. **Framing:** reuse the WAL's block framing (ADR-0007) through the existing writer and reader,
+   with the magic made a parameter. The manifest has its own magic (`"ShaleMAN"`) and
+   `FORMAT_VERSION 1`. One edit is one logical record. A torn tail at the end of the manifest was
+   never forced, so it never took effect, and is dropped. Interior corruption throws. Roll over to
+   a new `MANIFEST-N`, starting with a full-state edit, when the file passes a size option
+   (default 4 MiB).
+3. **Installation order:** new table to a temp file → force → rename → force the directory;
+   append the edit → force the manifest; publish the new Version; delete obsolete files once
+   unreferenced. A new manifest follows the same steps: write and force it, write and force
+   `CURRENT.tmp`, rename it to `CURRENT`, force the directory.
+   - **Directory force:** `FileChannel.open(dir, READ).force(true)`.
+   - **Supported platforms:** Linux and macOS, stated in the ADR; Windows is not a target.
+4. **Compatibility:** a directory with no `CURRENT` but `.sst`/`.wal` files is the M4 layout.
+   Migrate it once with the existing discovery code: every table at L0, the sequence from a scan,
+   then write the first manifest. Test against a checked-in M4 directory fixture. A `CURRENT` with
+   an invalid manifest throws `CorruptionException` and never falls back to discovery.
+5. **Counters and replay:**
+   - Next file number = one past the highest number in the manifest or in any file name present
+     (orphans included). Last sequence = the maximum of the manifest's and the replayed WAL's.
+   - **Recovery flush:** keep flushing a non-empty replayed memtable at open (LevelDB's default).
+     Install it through a manifest edit that advances the log number, then delete the replayed
+     segments. Note: a reopen *without* writes already adds nothing. The flush is conditional on
+     replayed data (`Shale.java:173`), and M6's compaction absorbs the small tables it creates.
+   - **File names:** keep `%06d` as a minimum width; parse `\d{6,}` and order numerically.
+6. **Ownership:** Versions are reference-counted. A reader acquires the current Version under a
+   short lock that guards `current`, and retains it there. That is obviously correct; a lock-free
+   `tryRetain` is a later optimisation that needs a benchmark. `get` and `scan` both pin.
+   A file is deleted when it is in no durable Version and its last reference drops.
+7. **Failures and close:**
+   - **Install failure:** a failed manifest append or force, or a failed rename, puts the engine
+     in a failed state. Reads continue from the last good Version; writes throw
+     `EngineStateException`.
+   - **Close:** `close()` is idempotent; operations after it throw `EngineStateException`.
+   - **Double open:** a `LOCK` file taken with `FileChannel.tryLock` prevents it.
+   - **Delete failure:** counted, and retried at the next open as orphan cleanup.
+8. **Comparator:** persist `shale.BytewiseComparator`; a mismatch refuses to open. No public API
+   change.
+
+**The crash-test seam** (implementation step 2): an internal `FileSystemOps` interface — open,
+append, force, rename, delete, list, force-directory — with the real NIO implementation and a
+test-scope `SimulatedFileSystem`. The simulated one tracks forced versus unforced bytes and
+directory entries, records an operation trace, and can crash at operation *N*: dropping unforced
+data and optionally tearing the last write. It is the engine's first simulation harness.
+
+**Deferred:** group commit and background flush (M5.5), compaction (M6), batches, snapshots and
+filters (M7). Lifecycle tests may install test Versions;
 M5 does not need a production compactor.
 
 ## Implementation order
@@ -56,17 +113,17 @@ M5 does not need a production compactor.
    Record operation traces for reproducibility; do not expand the public backend API.
 3. Manifest codec/replay, validation, reader/writer golden checks and rollover tests.
 4. Immutable Versions, safe publication/acquisition and obsolete-file reclamation tests.
-5. Integrate open/flush, retire directory discovery as authority and unconditional recovery
-   flush, and bind WAL reclamation to durable metadata.
+5. Integrate open/flush, retire directory discovery as the authority (keeping it only for the
+   one-time M4 migration), and bind WAL reclamation to durable metadata.
 6. Enumerate installation/recovery fault points; extend the reference model and controlled
    concurrency tests. Include recovery interrupted by another crash.
 7. Run `./gradlew build crashTest` on JDK 25. Update package docs, as-built architecture,
-   README status and release note; tag only after gates pass.
+   README status and the changelog; tag only after gates pass.
 
 ## Acceptance gates
 
 - Reopen one record 1,000 times without writes: no new SSTables, bounded WAL count, same value.
-  A first legacy migration, if supported, is tested separately.
+  The one-time M4 migration is tested separately, from the checked-in fixture.
 - Every flush/install/rollover crash point preserves acknowledged SYNC/GROUP writes. Surviving
   unacknowledged writes may appear under the documented policy; NONE has a weaker guarantee.
   Artificial truncation checks complete surviving records, not bytes deliberately removed.
@@ -84,7 +141,4 @@ M5 does not need a production compactor.
 
 ## Subsequent milestones
 
-Each has its own plan, ordered in the [completion plan](completion-plan.md):
-[M5.5](m5-5-concurrent-write-path.md) (including the pre-M5.5 benchmark baseline),
-[M6](m6-compaction.md), [M7](m7-filters-cache-mvcc.md), [M8](m8-benchmark-suite.md), then the
-ShaleDB track D1–D6. The notes that used to live here moved into those plans.
+Ordered in the [completion plan](completion-plan.md), each with its own plan.

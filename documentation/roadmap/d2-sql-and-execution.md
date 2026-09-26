@@ -11,7 +11,7 @@ snapshot and commits one `WriteBatch`.
 ## Decisions required in the ADR ("SQL dialect and query processing")
 
 1. **Grammar (frozen for D2).**
-   - `CREATE TABLE`, with column types, `NOT NULL` and `PRIMARY KEY (…)`;
+   - `CREATE TABLE`, with column types, `NOT NULL` and a required `PRIMARY KEY (…)`;
    - `CREATE [UNIQUE] INDEX`, `DROP TABLE`, `DROP INDEX`;
    - `INSERT INTO t (cols) VALUES (…), (…)`;
    - `SELECT cols | * FROM t [WHERE] [ORDER BY] [LIMIT n [OFFSET m]]`;
@@ -51,7 +51,7 @@ and `Session` / `Result`. Also the **logic-test runner**: `.slt` files under
 `statement error <text>`, `query <types> [rowsort]` + `----` + expected rows).
 
 **Deferred:** joins, aggregates, `DISTINCT`, top-N, `LIKE`, `IN` and `BETWEEN` (D3);
-`BEGIN/COMMIT` (D4); the server (D5).
+`BEGIN/COMMIT` (D4); the PostgreSQL protocol (D5); `EXPLAIN ANALYZE` (D6).
 
 ## Task order (TDD; each task one commit, gate green)
 
@@ -68,7 +68,7 @@ and `Session` / `Result`. Also the **logic-test runner**: `.slt` files under
    indexes) and a seeded random query generator. Every generated query must give the same rows
    (as a multiset, or in order under `ORDER BY`) on both executors.
 9. Docs: `architecture/d2-sql-and-execution.md` (text → AST → plan → operators diagram, one
-   query traced end to end), glossary, README status, release note, tag `d2-sql`.
+   query traced end to end), glossary, README status, changelog, tag `d2-sql`.
 
 ## Acceptance gates
 

@@ -1,7 +1,7 @@
 # D1 — Record layer: encoding, rows, catalog: implementation plan
 
-**Status:** planned 2026-09-26; first ShaleDB milestone (ADR-0013). Starts after M8 (or after
-M7a on the fast-track). **Depends on:** M7a (`WriteBatch`, `Snapshot`), the public
+**Status:** planned; first ShaleDB milestone (ADR-0013). Starts after M8 (or after M7 on the
+fast-track). **Depends on:** M7 (`WriteBatch`, `Snapshot`, `ReadOptions`), the public
 `StorageBackend` SPI only. **Creates:** the `shale-db` module.
 
 **Goal:** store typed tables with primary and secondary indexes on the byte-KV engine. A row and
@@ -25,7 +25,10 @@ artifact is an embedded Java API for typed tables. SQL arrives in D2.
    `0x02 | tableId:u32 BE | indexId:u32 BE | encoded index columns | encoded primary-key columns`.
    The primary index is `indexId = 1`, with row value. A non-unique secondary index entry has an
    empty value, because the primary key is already in its key. A unique secondary index has only the
-   index columns in its key, and the primary key as its value (the CockroachDB layout).
+   index columns in its key, and the primary key as its value (the CockroachDB layout). **Nulls in a
+   unique index:** SQL allows many rows whose indexed value is `NULL`. So when any indexed column is
+   `NULL`, the entry takes the non-unique layout, with the primary key appended, and it never
+   collides.
 3. **Row format v1.** A version byte, schema version (varint), a null bitmap, then the non-key
    columns in schema order: fixed 8-byte little-endian for BIGINT and DOUBLE, one byte for
    BOOLEAN, varint length plus bytes for TEXT. No per-row CRC: the engine checksums every WAL
@@ -35,7 +38,14 @@ artifact is an embedded Java API for typed tables. SQL arrives in D2.
    `IndexDescriptor` (id, name, columns, unique) live in the system keyspace as rows of
    hard-coded bootstrap tables, so the catalog describes itself (PostgreSQL's `pg_class` idea).
    Name→id lookup is a unique index on the catalog, and id allocation is a counter key there.
-   DDL commits catalog and data changes in one batch.
+   Ids are never reused.
+   - **Crash-safe index builds (after F1's online schema change).** An index is created in state
+     `BACKFILLING`: writes maintain it, the planner ignores it, and the backfill runs in bounded
+     batches. The final batch flips it to `PUBLIC`. Recovery finds a `BACKFILLING` index and
+     restarts or drops its backfill, so a crash can never leave a half-built index serving reads.
+   - **Drops.** A drop removes the descriptor in one atomic batch, then deletes data in batches.
+     Data left under an id that no descriptor names is garbage, and is swept at open.
+   - **Every table has a primary key**; the Java API and D2's grammar both require one.
 5. **Concurrency for D1–D3.** One writer lock per `Database` serialises writes; reads run at
    snapshots without it. D4 replaces this with optimistic transactions. Stating the simple model
    now keeps D1 small and correct.
@@ -43,16 +53,16 @@ artifact is an embedded Java API for typed tables. SQL arrives in D2.
 ## Scope
 
 **In D1:** module `shale-db` (package root `dev.shale.db`), JDK-only, with
-`verifyNoRuntimeDependencies` applied like `shale-core`; `dev.shale.db.type` (`Value` sealed
+`verifyNoRuntimeDependencies` applied like `shale-core`. First, move that task out of
+`shale-core/build.gradle.kts` into shared build logic applied to every zero-dependency module; `dev.shale.db.type` (`Value` sealed
 records, `ColumnType`); `dev.shale.db.record` (`OrderedEncoding`, `RowCodec`, key builders,
 `format.md`); `dev.shale.db.catalog`; `dev.shale.db.table` — `Table` with `insert`, `get(pk)`,
 `update`, `delete`, primary-key range scan and index scan; unique-constraint checks; `CREATE`/`DROP`
-`TABLE`/`INDEX` as Java calls (index backfill in bounded batches under the writer lock; drop =
-catalog removal + batched point deletes); `Database.open/close`; `Database.verify()`, which
+`TABLE`/`INDEX` as Java calls (the index states and drop sweep of decision 4); `Database.open/close`; `Database.verify()`, which
 checks that every index entry matches its row and every row has all its index entries.
 
-**Deferred:** SQL (D2); multi-statement transactions (D4); `ALTER TABLE` (stretch: add a
-nullable column via schema version); range tombstones for fast drops (stretch).
+**Deferred:** SQL (D2); multi-statement transactions (D4). **Not planned:** `ALTER TABLE`
+beyond what D2's grammar freezes; range tombstones.
 
 ## Task order (TDD; each task one commit, gate green)
 
@@ -69,7 +79,7 @@ nullable column via schema version); range tombstones for fast drops (stretch).
 9. Crash test: kill at every file operation during a multi-index insert, update and delete;
    recovery shows the row and all its index entries, or none of them.
 10. Docs: `architecture/d1-record-layer.md` (the table→KV mapping diagram, a row's bytes
-    end to end), glossary, README status, release note, tag `d1-record`.
+    end to end), glossary, README status, changelog, tag `d1-record`.
 
 ## Acceptance gates
 
@@ -77,6 +87,8 @@ nullable column via schema version); range tombstones for fast drops (stretch).
   the value order (jqwik, including NULL, ±0.0, NaN, empty and 0x00-containing text).
 - **Atomic rows:** no crash point leaves an index entry without its row or a row missing an index
   entry. `verify()` is clean after every recovery.
+- **Index states:** kill at every file operation of a backfill; after recovery the index is
+  either absent or complete, and never used while incomplete.
 - **Constraints:** a duplicate primary key or unique-index value is rejected, and nothing is
   written.
 - **Formats:** golden files for encoded keys and rows; bit-flip tests are detected or provably

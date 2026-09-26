@@ -42,7 +42,7 @@ ordered pages of results, and predicates that should use an index but D2 cannot 
 5. Extend the reference executor with joins, grouping and distinct; extend the random query
    generator; logic-test suites for each construct.
 6. Docs: update `architecture/d2-sql-and-execution.md` (or add `d3-*.md` if it grows past a
-   page) with the join and aggregate operators; glossary; README status; release note; tag
+   page) with the join and aggregate operators; glossary; README status; changelog; tag
    `d3-query`.
 
 ## Acceptance gates
