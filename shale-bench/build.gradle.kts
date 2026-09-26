@@ -1,4 +1,4 @@
-// shale-bench — JMH microbenchmarks and YCSB/db_bench-style harnesses for the engine.
+// shale-bench — JMH microbenchmarks and db_bench-style workload harnesses.
 // Benchmarks are committed before the optimisations they justify (CLAUDE.md §5, the
 // `perf` commit rule). Benchmark sources live in src/jmh/java.
 

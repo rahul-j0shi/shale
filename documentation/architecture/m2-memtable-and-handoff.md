@@ -1,10 +1,9 @@
 # M2 as-built — the skiplist memtable and the active → immutable handoff
 
 The detail behind the boxes added at M2 in the
-[README overview](../../README.md#architecture--the-complete-project-scope). Everything here is in
-the code at tag `m2-skiplist`; see the [M2 release note](../roadmap/m2-release-note.md), the decision
-in [ADR-0009](../adr/0009-skiplist-memtable.md), and the plan in
-[m2-skiplist-memtable.md](../roadmap/m2-skiplist-memtable.md).
+[README overview](../../README.md#architecture). Everything here is in
+the code at tag `m2-skiplist`; see the [changelog entry](../../CHANGELOG.md#m2--skiplist-memtable-and-immutable-handoff--m2-skiplist), the decision
+in [ADR-0009](../adr/0009-skiplist-memtable.md).
 
 M2's one sentence: **the memtable becomes a hand-written lock-free skiplist, and when it fills the
 engine freezes it and starts a new one — so reads no longer block writes.** Flushing those frozen

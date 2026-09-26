@@ -142,8 +142,8 @@ corruption is detected or provably harmless (on-disk-formats.md §3, §4).
 
 ## 8. Rationale
 
-See ADR-0010. Block granularity gives a corruption boundary (per-block CRC, N4), a future home for
-the block cache and bloom filter, and prefix compression + restart points — the techniques M3 exists
+See ADR-0010. Block granularity gives a corruption boundary (per-block CRC, N4), a home for the
+bloom filter, and prefix compression + restart points — the techniques M3 exists
 to teach. The metaindex block and the reserved compression-type byte make the M7 filter and a future
 codec additive rather than layout changes.
 

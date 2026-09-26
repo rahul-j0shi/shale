@@ -1,8 +1,8 @@
 # M1 as-built — WAL, durability, and the in-memory map
 
 The detail behind the built (green) boxes added at M1 in the
-[README overview](../../README.md#architecture--the-complete-project-scope). Everything here is
-in the code at tag `m1-wal`; see the [M1 release note](../roadmap/m1-release-note.md), the
+[README overview](../../README.md#architecture). Everything here is
+in the code at tag `m1-wal`; see the [changelog entry](../../CHANGELOG.md#m1--write-ahead-log--m1-wal), the
 decisions in [ADR-0007](../adr/0007-wal-block-log-format.md) (block-log format) and
 [ADR-0008](../adr/0008-durability-and-clock.md) (durability + clock), and the byte-level spec in
 [`wal/format.md`](../../shale-core/src/main/java/dev/shale/wal/format.md).
@@ -23,7 +23,7 @@ MVCC) builds on. Its three deliverables recur throughout the project:
 1. **The WAL** (`dev.shale.wal`, ADR-0007) — the log every write passes through and that recovery
    replays; M3's flush deletes a segment only after the SSTable covering it is durable.
 2. **The `Durability` contract** (ADR-0008) — `NONE`/`SYNC`/`GROUP`, chosen per write; the engine's
-   external knob from here through Flotilla's replicated writes.
+   external knob from here through ShaleDB's `COMMIT`.
 3. **The memtable seam** (`Memtable`/`TreeMemtable`) — the interface M2's skiplist fills in without
    the engine changing; also the first place the engine reads "newest version wins".
 

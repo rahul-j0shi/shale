@@ -3,7 +3,7 @@ package dev.shale;
 /**
  * The engine's injected time source. Every duration measurement and any future timed wait reads
  * time through a {@code Clock} rather than calling {@link System#nanoTime()} directly, so tests are
- * deterministic (testing.md §2) and simulation testing is possible later (M9).
+ * deterministic (testing.md §2) and the engine can run over a simulated filesystem in crash tests.
  *
  * <p><b>Threading:</b> implementations must be safe for concurrent reads.
  */

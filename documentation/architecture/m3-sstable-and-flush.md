@@ -1,8 +1,8 @@
 # M3 as-built — the SSTable format and flush
 
 The detail behind the boxes added at M3 in the
-[README overview](../../README.md#architecture--the-complete-project-scope). Everything here is in the
-code at tag `m3-sstable`; see the [M3 release note](../roadmap/m3-release-note.md), the decision in
+[README overview](../../README.md#architecture). Everything here is in the
+code at tag `m3-sstable`; see the [changelog entry](../../CHANGELOG.md#m3--sstable-write-and-flush--m3-sstable), the decision in
 [ADR-0010](../adr/0010-sstable-block-table-format.md), and the byte-level spec in
 [`sstable/format.md`](../../shale-core/src/main/java/dev/shale/sstable/format.md).
 
@@ -23,8 +23,7 @@ milestone extends. What M3 hands to the rest of the project:
 1. **The SSTable format** (`dev.shale.sstable`, ADR-0010) — a LevelDB block table:
    prefix-compressed data blocks with restart points, a last-key index block, an (empty, M7-ready)
    metaindex block, and a versioned footer. This is the immutable file M4's merge reads across,
-   M5's manifest tracks, M6's compaction rewrites, and M7's bloom filters and block cache attach
-   to.
+   M5's manifest tracks, M6's compaction rewrites, and M7's bloom filters attach to.
 2. **Flush with the D3 ordering** — the table is fsync'd and atomically renamed **before** the
    WAL segment holding the same data is deleted. This is the first place the M1 durability
    invariant is actually exploited to reclaim space; the crash-window reasoning here is exactly
