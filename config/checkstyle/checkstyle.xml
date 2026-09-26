@@ -4,7 +4,7 @@
     "https://checkstyle.org/dtds/configuration_1_3.dtd">
 
 <!--
-  Shale / Flotilla Checkstyle configuration.
+  Shale / ShaleDB Checkstyle configuration.
 
   Scope: this file enforces only the rules a formatter cannot. Whitespace, wrapping,
   and import ordering are handled by Spotless + google-java-format; duplicating them
@@ -160,10 +160,8 @@
          catches a banned import at the point of writing, in any module. -->
     <module name="IllegalImport">
       <property name="illegalPkgs"
-                value="com.google.common, com.github.benmanes.caffeine, org.ehcache,
-                       lombok, org.springframework, com.google.inject,
-                       org.rocksdb, org.mapdb, jetbrains.exodus,
-                       org.apache.ratis, io.atomix"/>
+                value="com.google.common, lombok, org.springframework, com.google.inject,
+                       org.rocksdb, org.mapdb, jetbrains.exodus"/>
     </module>
 
     <!-- ================= structure ================= -->
