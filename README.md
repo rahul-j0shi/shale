@@ -2,9 +2,10 @@
 
 [![build](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml/badge.svg)](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml)
 
-A hand-written **LSM-tree storage engine** (`Shale`) in Java, and the **Raft-replicated,
-range-sharded distributed store** planned on top of it (`Flotilla`) — every core mechanism
-implemented from first principles, with no third-party library for any of them.
+A hand-written **LSM-tree storage engine** (`Shale`) in Java, the **relational database**
+planned on top of it (`ShaleDB` — SQL, indexes, serializable transactions, a server and a CRUD
+demo), and an optional **Raft-replicated, range-sharded store** (`Flotilla`) — every core
+mechanism implemented from first principles, with no third-party library for any of them.
 
 > **The prime directive: the implementation *is* the product.**
 > This is a study-and-portfolio project. Its value is that write-ahead logging, skiplists,
@@ -30,7 +31,9 @@ not yet a full LSM engine.
 | Group commit, background flush, write stalls | ❌ M5.5 |
 | Compaction, bloom filters, block cache, MVCC snapshots | ❌ M6–M7 |
 | Benchmarks (`shale-bench` — JMH plugin wired, no benchmarks written) | ❌ M8 |
-| `flotilla-raft`, `flotilla-server` (empty build shells) | ❌ M9–M10 |
+| ShaleDB — record layer, SQL, planner, executor, transactions, server, CRUD demo | ❌ D1–D6 |
+| COW B+Tree backend *(optional)* | ❌ M8b |
+| `flotilla-raft`, `flotilla-server` *(optional; empty build shells)* | ❌ M9–M10 |
 
 **How it is verified.** A crash test truncates the WAL at every byte offset and asserts
 recovery yields a clean prefix. A bit-flip-at-every-offset test asserts every SSTable
@@ -51,31 +54,36 @@ means owning those knobs — and being able to **measure** the tradeoff rather t
 ## Architecture
 
 ```
-flotilla-server ──▶ flotilla-raft ──▶ shale-core
-       └───────────────────────────────────┘
+shale-demo ──▶ shale-server ──▶ shale-db ──▶ shale-core ◀── flotilla-raft ◀── flotilla-server
+ (D6, app)      (D5, HTTP)      (D1–D4, SQL)   (engine)        (M9, optional)     (M10, stretch)
 ```
 
 `shale-core` is an embeddable single-node engine that **depends on nothing but the JDK**, and
-must never depend on networking, RPC or clustering code — that boundary is the architectural
-point of the project. Full scope diagrams:
+must never depend on SQL, networking, RPC or clustering code — that boundary is the architectural
+point of the project. ShaleDB sits *above* the engine's `StorageBackend` interface, the way
+MySQL sits on MyRocks ([ADR-0013](documentation/adr/0013-build-shaledb-relational-layer.md)). Full scope diagrams:
 [`documentation/architecture/project-scope.md`](documentation/architecture/project-scope.md).
 As-built designs, milestone by milestone:
 [`documentation/architecture/`](documentation/architecture/).
 
 ## Roadmap
 
-Strictly ordered; each milestone ends in a runnable, tested artifact.
+Strictly ordered; each milestone ends in a runnable, tested artifact. **v1.0 = Shale 1.0 +
+ShaleDB.** The [completion plan](documentation/roadmap/completion-plan.md) orders every
+remaining milestone, with estimates, cut lines and a per-milestone plan.
 
 | | Milestone | Yields |
 |---|---|---|
 | **M0–M4** | *Complete* | SPI · internal-key encoding · WAL · skiplist · SSTable + flush · merge iterator |
 | **M5** | Manifest + recovery hardening | Version edits, atomic install, `CURRENT`, ref-counted lifecycle |
 | **M5.5** | Concurrent write path | fsync outside the write lock, group commit, background flush + write stalls |
-| **M6** | Compaction | Size-tiered then leveled; scoring, picking, write stalls, amplification counters |
-| **M7** | Filters, cache, MVCC | Per-SSTable bloom, block/table cache, snapshots, atomic batches |
-| **M8** | COW B+Tree capstone | Second backend + benchmark suite — the RUM tradeoff, measured (time-boxed) |
-| **M9** | Single Raft group | Engine as replicated state machine; snapshot = engine snapshot |
-| **M10** | Multi-Raft sharding | Range partitions, split/merge/rebalance, routing, placement metadata |
+| **M6** | Compaction | Leveled and size-tiered (order set by the M6 ADR); scoring, picking, write stalls, amplification counters |
+| **M7a–c** | MVCC, filters, cache | Atomic batches + snapshots, per-SSTable bloom, block/table cache |
+| **M8** | Benchmark suite | db_bench + YCSB A–F; the RUM tradeoff measured within the LSM — **Shale 1.0** |
+| **D1–D4** | ShaleDB | Order-preserving keys + catalog · SQL parser, planner, Volcano executor · joins + aggregates · serializable OCC transactions |
+| **D5–D6** | Server + demo | HTTP/JSON server + shell · CRUD app with a live engine panel and a `kill -9` demo — **v1.0** |
+| **M8b** | COW B+Tree *(optional)* | Second backend; the same SQL layer and benchmarks on both |
+| **M9–M10** | Flotilla *(optional / stretch)* | Single Raft group; then multi-Raft range sharding |
 
 Charter, component inventory and citations:
 [`documentation/roadmap/shale-roadmap.md`](documentation/roadmap/shale-roadmap.md). Percolator

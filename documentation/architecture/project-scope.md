@@ -9,22 +9,31 @@ will sit. For what is actually implemented, read the per-milestone as-built page
 **Legend:** solid box / `✓ Mn` = in the code now, built at milestone *Mn*. Dashed box + `Mn`
 = defined in the [roadmap](../../README.md#roadmap) and not yet written. Today `shale-core`
 is built through M4; `shale-bench`, `flotilla-raft`, and `flotilla-server` are empty build
-shells.
+shells; the ShaleDB modules (ADR-0013) do not exist yet. The order everything is built in is the
+[completion plan](../roadmap/completion-plan.md).
 
 ### 1 · Modules, dependency direction, and the build gate
 
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M8: manifest · write path · compaction .. B+Tree"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M8: manifest · write path · compaction · MVCC / filters / cache"]:::part
     bench["shale-bench — JMH / YCSB / db_bench · M8<br/>build shell (no source yet)"]:::plan
     raft["flotilla-raft — consensus · M9<br/>build shell (no source yet)"]:::plan
-    server["flotilla-server — RPC / sharding / PD · M10<br/>build shell (no source yet)"]:::plan
+    server["flotilla-server — RPC / sharding / PD · M10 (stretch)<br/>build shell (no source yet)"]:::plan
+    sdb["shale-db — record layer · catalog · SQL · planner · executor · transactions · D1-D4<br/>planned module"]:::plan
+    ssrv["shale-server — HTTP/JSON server · client · shell · D5<br/>planned module"]:::plan
+    sdemo["shale-demo — CRUD app + engine panel · D6<br/>planned module"]:::plan
+    sbt["shale-btree — COW B+Tree backend · M8b (optional)<br/>planned module"]:::plan
   end
   server -->|implementation| raft
   server -->|implementation| core
   raft -->|api| core
   bench -->|jmh| core
+  sdb -->|public SPI only| core
+  ssrv -->|implementation| sdb
+  sdemo -->|HTTP protocol| ssrv
+  sbt -->|implements SPI| core
   gate["Build gate ✓ — spotless · checkstyle · javac -Werror<br/>tasks: test / crashTest / soakTest · deps: junit / assertj / jqwik / jmh"]:::done
   gate -. enforces .-> core
 
@@ -33,9 +42,10 @@ flowchart TB
   classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
 ```
 
-`shale-core` depends on nothing but the JDK; the other three depend inward only — the arrows
+`shale-core` depends on nothing but the JDK; every other module depends inward only — the arrows
 are enforced in each module's `build.gradle.kts`, not by convention. `shale-core` is built
-through M4 (dashed border: M5-M8 remain); everything else is a shell awaiting its milestone.
+through M4 (dashed border: M5-M8 remain); the other existing modules are shells awaiting their
+milestone, and the planned modules are created by the milestone that names them.
 
 ### 2 · Shale — the single-node engine (full component scope)
 
@@ -89,7 +99,7 @@ flowchart TB
     cache["Block cache · Table cache M7 · OS page cache"]:::plan
   end
 
-  bpt["COW B+Tree backend M8 · 2nd StorageBackend (RUM comparison)"]:::plan
+  bpt["COW B+Tree backend M8b (optional) · 2nd StorageBackend (RUM comparison)"]:::plan
 
   client --> spi
   spi --> wal
@@ -126,10 +136,51 @@ flowchart TB
   classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
 ```
 
+### 2b · ShaleDB — the relational layer (full component scope)
+
+A database built on the engine's public `StorageBackend` interface (ADR-0013): typed rows and
+indexes are encoded into ordered keys, SQL is parsed and planned into Volcano operators, and
+transactions validate optimistically over engine snapshots. All planned (D1–D6).
+
+```mermaid
+flowchart TB
+  app["shale-demo · Shelf CRUD app + engine panel D6"]:::plan
+  client["ShaleClient · shell D5"]:::plan
+  http["shale-server · HTTP/JSON /v1/sql · sessions · /v1/metrics D5"]:::plan
+
+  subgraph db["shale-db"]
+    parse["Lexer · recursive-descent parser · AST D2"]:::plan
+    bind["Binder · types · nulls D2"]:::plan
+    plan["Planner · AccessPath (PointGet / range / IndexScan / TableScan) · EXPLAIN D2-D3"]:::plan
+    exec["Volcano Operators · scan · filter · sort · top-N · joins · hash aggregate D2-D3"]:::plan
+    txn["Transactions · Oracle · ReadSet / WriteSet · serializable OCC D4"]:::plan
+    cat["Catalog · TableDescriptor · IndexDescriptor D1"]:::plan
+    rec["Record layer · order-preserving encoding · row format · primary + secondary indexes D1"]:::plan
+  end
+
+  spi["shale-core StorageBackend · WriteBatch + Snapshot (M7a)"]:::part
+
+  app -->|HTTP| http
+  client -->|HTTP| http
+  http --> parse
+  parse --> bind
+  bind --> plan
+  plan --> exec
+  exec --> txn
+  bind -. resolves names .-> cat
+  txn --> rec
+  cat --> rec
+  rec -->|"one WriteBatch per commit · reads at a Snapshot"| spi
+
+  classDef part stroke:#2ea043,stroke-width:2px,stroke-dasharray:6 3;
+  classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;
+```
+
 ### 3 · Flotilla — the distributed store (full component scope)
 
 The engine becomes the replicated state machine behind Raft; a router and placement driver
-shard the key space into Regions, each its own Raft group. All planned (M9–M10); the state
+shard the key space into Regions, each its own Raft group. All planned and optional (M9, with
+M10 a stretch; built after v1.0); the state
 machine is the M0 engine. Percolator (M11) is a non-goal and is not drawn.
 
 ```mermaid
@@ -177,10 +228,12 @@ flowchart LR
     soak["Soak M6"]:::plan
     dst["Deterministic simulation · seeded M9"]:::plan
     fuzz["Fuzzing · WAL/SSTable parsers M3+"]:::plan
+    logic["Logic tests · .slt + differential queries D2"]:::plan
+    kill["Process kill -9 test · server D5"]:::plan
     jep["Jepsen linearizability M9+"]:::plan
   end
-  bench["Benchmarks · shale-bench<br/>JMH plugin wired, no benchmarks written yet · YCSB A-F · db_bench (fillseq/fillrandom/readrandom/seekrandom) M8<br/>RUM: LSM vs COW B+Tree M8"]:::plan
-  target["Shale engine + Flotilla cluster"]
+  bench["Benchmarks · shale-bench<br/>JMH plugin wired, no benchmarks written yet · YCSB A-F · db_bench (fillseq/fillrandom/readrandom/seekrandom) M8<br/>RUM within the LSM M8 · LSM vs COW B+Tree M8b"]:::plan
+  target["Shale engine + ShaleDB + Flotilla cluster"]
   tiers --> target
   bench --> target
 

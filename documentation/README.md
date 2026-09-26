@@ -15,8 +15,12 @@ status, then come back here.
    status table. The full scope diagrams are in
    [architecture/project-scope.md](architecture/project-scope.md).
 2. **[roadmap/shale-roadmap.md](roadmap/shale-roadmap.md)** — the charter: goals, non-goals, the RUM
-   tradeoff at the heart of it, and the milestone build order (M0 → M10; M11 is a non-goal).
-3. **A milestone, end to end** — pick one and read its three faces: the **decision** (`adr/`), the
+   tradeoff at the heart of it, and the milestone build order (M0 → M8, ShaleDB D1 → D6, then the
+   optional M8b and M9 → M10; M11 is a non-goal).
+3. **[roadmap/completion-plan.md](roadmap/completion-plan.md)** — the working plan: every remaining
+   milestone in order, with its plan file, estimate, open decisions, cut lines and status. Start
+   implementation here.
+4. **A milestone, end to end** — pick one and read its three faces: the **decision** (`adr/`), the
    **as-built** explainer (`architecture/`), and, for on-disk work, the **byte layout**
    (`<package>/format.md`). M3 is a good example: [ADR-0010](adr/0010-sstable-block-table-format.md) →
    [m3-sstable-and-flush](architecture/m3-sstable-and-flush.md) →
@@ -26,7 +30,7 @@ status, then come back here.
 
 | Area | What it answers | Index |
 |---|---|---|
-| **Roadmap** | *What are we building, and in what order?* Charter, per-milestone plans, release notes. | [roadmap/](roadmap/) |
+| **Roadmap** | *What are we building, and in what order?* Charter, the completion plan, per-milestone plans, release notes. | [roadmap/](roadmap/) · [completion plan](roadmap/completion-plan.md) |
 | **ADRs** | *Why is it built this way?* One record per expensive, hard-to-reverse decision. | [adr/README.md](adr/README.md) |
 | **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
 | **Conventions** | *What are the rules?* Naming, style, commits, concurrency, formats, errors, testing, docs. | [conventions/](conventions/) |
@@ -66,6 +70,7 @@ flowchart LR
 Through **M4** (tag `m4-merge`): a durable, crash-consistent engine with a write-ahead log, a
 hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming reads
 through a heap-based multi-way merge with reconciliation. See the
-[README status](../README.md) and the newest [release note](roadmap/) for specifics; the
+[README status](../README.md) and the newest [release note](roadmap/) for specifics, and the
+[completion plan](roadmap/completion-plan.md) for what comes next; the
 [architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed
 milestone.
