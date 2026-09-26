@@ -9,7 +9,7 @@
 
 Every mechanism this project sets out to build has a mature, faster, better-tested JVM
 implementation available as a dependency. Guava has a bloom filter. `ConcurrentSkipListMap`
-is a production skiplist. Apache Ratis is a battle-tested Raft. RocksDB's JNI bindings
+is a production skiplist. Apache Calcite is a complete SQL planner. RocksDB's JNI bindings
 would provide the entire engine, and would beat anything written here by a wide margin
 on every benchmark.
 
@@ -42,8 +42,9 @@ Requires maintaining an allowlist and defending the line under time pressure.
 ## Decision
 
 Option C. Every component named in the roadmap's inventory — WAL, memtable/skiplist,
-SSTable encoding, compaction, bloom filter, block cache, MVCC, manifest, iterators,
-Raft, sharding, distributed transactions — is implemented from first principles in this
+SSTable encoding, compaction, bloom filter, MVCC, manifest, iterators, and the relational
+layer above them (record encoding, SQL parsing, planning, execution, concurrency control and
+the wire protocol, ADR-0013) — is implemented from first principles in this
 repository, with no third-party implementation of that concept present even transitively.
 
 `shale-core` carries zero runtime dependencies. The allowlist and the ban list live in
@@ -83,8 +84,9 @@ before they are reinvented adequately. The crash and property test suites
 control for writing our own primitives.
 
 **Neutral:** benchmark numbers will not be competitive with RocksDB and are not intended
-to be. The comparison that matters is Shale-LSM against Shale-B+Tree on the same
-harness (roadmap M8), where both sides are ours.
+to be. RocksDB and SQLite appear only as reference baselines in the benchmark module
+(ADR-0013), so our numbers have context; the comparisons that matter are between Shale's own
+configurations, measured through the same workloads.
 
 **If we need to reverse this:** we would not reverse it; we would end the project and
 use RocksDB. That is the honest statement of what this decision is.

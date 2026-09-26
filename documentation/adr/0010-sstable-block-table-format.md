@@ -35,9 +35,9 @@ exists, and how a flush is ordered against WAL-segment deletion.
 
 **A1 — A flat sorted array of length-prefixed key/value pairs.** Simplest possible: write every
 `(internalKeyLen, internalKey, valueLen, value)` in order, binary-search on read. It works, but it
-throws away everything the milestone is meant to teach: no block granularity (so no per-block CRC, no
-future block cache, no place to hang a bloom filter), no prefix compression, no restart points. A dead
-end that M4–M7 would have to tear up.
+throws away everything the milestone is meant to teach: no block granularity (so no per-block CRC and
+no place to hang a bloom filter), no prefix compression, no restart points. A dead end that M4–M7 would
+have to tear up.
 
 **A2 — The LevelDB block table.** A sequence of **data blocks**, then a **metaindex block**, then an
 **index block**, then a fixed **footer**. Inside a data block, keys are **prefix-compressed** against
@@ -47,9 +47,9 @@ binary search; a trailing restart-offset array plus count closes the block. Each
 block's last key → a `BlockHandle{offset, size}`. This is the canonical, well-documented design
 (LevelDB `table/`), the one Petrov ch. 3 and every reference engine use, and the substrate M4–M7 need.
 
-**A3 — A copy-on-write B+tree file (LMDB-style).** The read-optimised in-place contrast. This is
-deliberately the **M8 capstone** comparison backend, not the LSM path; building it here would be
-building the wrong milestone.
+**A3 — A copy-on-write B+tree file (LMDB-style).** The read-optimised in-place contrast. It is a
+different access method, not an SSTable format: choosing it would abandon the LSM design the project
+is about.
 
 ### Key separators in the index
 
