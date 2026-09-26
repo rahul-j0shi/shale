@@ -19,7 +19,7 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | memtable switch | `rotate`, `seal`, `roll` (the memtable) | Freezing the active memtable and starting a new one |
 | `Wal` (in identifiers) | `WAL` in identifiers, `Journal`, `Log` alone | Write-ahead log |
 | `WalSegment` | `LogFile`, `LogChunk` | One rolled WAL file |
-| `Manifest` | `Metadata`, `Catalog` | The log of version edits |
+| `Manifest` | `Metadata`, `Catalog` (that is ShaleDB's schema registry) | The log of version edits |
 | `VersionEdit` | `Delta`, `Change` | One atomic change to the file set |
 | `Version` | `Snapshot` (reserved, see below) | The live set of SSTables at a point in time |
 | `Snapshot` | `Checkpoint` | An MVCC read view, identified by a sequence number |
@@ -43,6 +43,19 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `RaftGroup` | `Cluster`, `Quorum` | The replica set owning one Region |
 | `Peer` | `Node`, `Server`, `Replica` | One member of a RaftGroup |
 | `Store` | `Instance` | One Flotilla process holding many Regions |
+| **ShaleDB** (D1+, ADR-0013) | | *The relational layer above the engine* |
+| `Catalog` | `Dictionary`, `SchemaRegistry`, `Metadata` | ShaleDB's registry of table and index descriptors, stored in the system keyspace. Never the engine's `Manifest` |
+| `TableDescriptor` / `IndexDescriptor` | `TableInfo`, `TableMeta`, `Schema` alone | The catalog entry for one table / one index |
+| `Row` | `Tuple`, `Record` in identifiers | One table row: `Value`s in column order |
+| `PrimaryIndex` / `SecondaryIndex` | `ClusteredIndex`, `Lookup` | The row-holding index keyed by primary key / an index keyed by other columns ending in the primary key |
+| order-preserving encoding (`OrderedEncoding`) | `memcomparable`, `sortable`, `lexi` encoding | Encoding whose bytewise order equals value order |
+| `AccessPath` | `ScanType`, `Strategy` | How a plan reads a table: point get, range scan, index scan, table scan (Selinger) |
+| `Operator` | `Node`, `Executor` for one operator | One Volcano iterator in a physical plan: `open` / `next` / `close` |
+| `LogicalPlan` / `PhysicalPlan` | `QueryTree`, `Plan` alone | Bound relational algebra / the chosen operator tree |
+| `Transaction` | `Txn` in identifiers | A ShaleDB unit of serializable work (D4) |
+| `ReadSet` / `WriteSet` | `Reads`, `Buffer` | Keys and ranges a transaction read / mutations it will commit |
+| `Session` | `Connection` (server side) | One client's state on the server: current transaction, settings |
+| `ShaleDbServer` | `Server` alone, `Node` | The single-node ShaleDB server process (D5) |
 
 `Node`, `Server`, and `Replica` are banned as type names precisely because they are the
 words people reach for by reflex; they mean three different things across the Raft,
@@ -100,6 +113,12 @@ dev.shale.manifest
 dev.shale.iterator
 dev.shale.cache
 dev.shale.internal       ← not public API; see below
+
+dev.shale.db.type        dev.shale.db.plan         ← shale-db (D1–D4)
+dev.shale.db.record      dev.shale.db.exec
+dev.shale.db.catalog     dev.shale.db.txn
+dev.shale.db.table       dev.shale.db.sql
+dev.shale.server         dev.shale.demo            ← shale-server (D5), shale-demo (D6)
 ```
 
 **Package by feature, not by layer.** No `util`, `helpers`, `common`, `misc`, `base`,

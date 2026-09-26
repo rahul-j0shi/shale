@@ -3,7 +3,7 @@
 ## TL;DR
 - **Build it, and build it full-stack.** A hand-written LSM engine in Java, taken all the way to a Raft-replicated, sharded distributed layer, is one of the highest-signal systems portfolio projects you can attempt — it forces you to confront durability, crash consistency, the read/write/space amplification trilemma (the RUM conjecture), and consensus, which very few "build a database" tutorials do end to end. Scope it as ~8–11 milestones over many months, each producing a runnable, testable artifact.
 - **On the B+Tree question: do NOT build a full comparative B+Tree backend as your primary path — use B-Tree/B+Tree ideas *inside* the engine (block indexes) now, and build an optional copy-on-write B+Tree backend late as a "capstone" comparison.** The highest learning value is: (1) a block index inside every SSTable (mandatory), and (2) — only after the LSM path works — a small LMDB-style copy-on-write B+Tree as a second `StorageBackend` behind a shared interface so you can benchmark LSM vs. in-place. Building it first or as a co-equal track roughly doubles your surface area for little added insight.
-- **Sequence it strictly bottom-up:** WAL + in-memory map → memtable/flush → SSTable → merged reads → manifest/recovery hardening → concurrent write path → compaction → filters/cache/MVCC. Then choose the bounded B+Tree comparison or Raft/sharding. Percolator is a non-goal; see §E for dependencies.
+- **Sequence it strictly bottom-up:** WAL + in-memory map → memtable/flush → SSTable → merged reads → manifest/recovery hardening → concurrent write path → compaction → filters/cache/MVCC → benchmarks. Then (amended 2026-09-26, ADR-0013) a relational layer, ShaleDB, and a CRUD demo on top; the bounded B+Tree comparison and Raft/sharding follow as optional capstones. Percolator is a non-goal; see §E for dependencies and [`completion-plan.md`](completion-plan.md) for the working order.
 
 ## Key Findings
 
@@ -34,9 +34,15 @@ Petrov covers copy-on-write B-Trees (LMDB), lazy B-Trees (WiredTiger), FD-trees,
 4. A written design doc per milestone recording reversible vs. irreversible decisions.
 
 **Non-goals (keep it tractable) — put these OUT of scope initially**
-- SQL/query planner, secondary indexes, a full type system — stay a byte-key/byte-value store.
+
+*Amended 2026-09-26 by [ADR-0013](../adr/0013-build-shaledb-relational-layer.md):* the engine
+itself stays a byte-key/byte-value store, but a relational layer (ShaleDB) is now built **above**
+it in separate modules — a SQL subset, a rule-based planner, primary and secondary indexes,
+serializable single-node transactions, a single-node server and a CRUD demo. What remains out of
+scope:
+- The full SQL standard, a cost-based optimizer, distributed SQL and distributed transactions; SQL, indexes or types inside `shale-core`.
 - Columnar storage, HTAP, vectorized execution.
-- A production network server, auth, multi-tenancy, TLS.
+- Production server concerns: auth, multi-tenancy, TLS; a JDBC driver and the PostgreSQL wire protocol are stretch only.
 - Byzantine fault tolerance (Raft assumes crash-stop, non-Byzantine nodes).
 - Key-value separation (WiscKey), learned indexes, ribbon/cuckoo filters, open-channel SSD/FTL work — note them as "stretch" only.
 - Portable/zero-copy on-disk format guarantees across architectures beyond fixing endianness.
@@ -134,10 +140,12 @@ Each milestone yields a working, testable artifact. Dependencies flow downward.
 - **M5 — Manifest + recovery hardening.** Version edits, atomic version install, CURRENT file, reference-counted file lifecycle, full crash-recovery tests. *Depends on M4.* See the [implementation plan](m5-manifest-and-recovery.md).
 - **M5.5 — Concurrent write path.** Shorten the write critical section: WAL append and sequence assignment under the lock, `force()` outside it, leader/follower group commit (finally honouring `Durability.GROUP`), and flush moved to an injected background executor with a bounded immutable-memtable queue and write stalls. *Depends on M5; blocks M6.* Added after M4: the M3-era synchronous flush holds `writeLock` across an fsync, which forecloses both group commit and background compaction, so this is a prerequisite rather than an optimisation.
 - **M6 — Compaction.** Start with size-tiered (simpler), then leveled, keeping both selectable so the amplification comparison is measurable; add scoring, file picking, background threads, write stalls, trivial move. Wire the WA/RA/SA counters here, not later. *Depends on M5.5.*
-- **M7 — Bloom filters + block/table cache + MVCC/snapshots.** Per-SSTable bloom (then Monkey-style allocation as a stretch); block cache; sequence-number snapshots + atomic write batches. *Depends on M6.*
-- **M8 — (Capstone comparison) COW B+Tree backend + full benchmark suite (YCSB/db_bench-style, JMH microbenchmarks).** *Depends on M7 + the M0 interface.* **Time-boxed to four weeks**: the deliverable is the measured comparison, not the tree. If the backend overruns, ship the harness and the LSM numbers and say what was not measured.
-- **M9 — Single Raft group replication.** Engine becomes the replicated state machine behind Raft (election, log replication, snapshot = engine snapshot). *Depends on M7.*
-- **M10 — Multi-Raft sharding + placement/metadata service + routing.** Range partitions, split/merge, PD-like metadata + TSO. *Depends on M9.*
+- **M7 — Bloom filters + block/table cache + MVCC/snapshots.** Per-SSTable bloom (then Monkey-style allocation as a stretch); block cache; sequence-number snapshots + atomic write batches. *Depends on M6.* Built as three slices, batches + snapshots first because ShaleDB depends on them: M7a, M7b (bloom), M7c (cache).
+- **M8 — Full benchmark suite (YCSB/db_bench-style, JMH microbenchmarks), the LSM measured.** *Depends on M7.* Ends Shale 1.0. *Amended 2026-09-26:* the COW B+Tree backend that was paired with this suite moves to M8b.
+- **D1–D6 — ShaleDB: a relational layer and a CRUD demo on the engine** *(added 2026-09-26, ADR-0013)*. D1 record layer (order-preserving key encoding, row format, catalog, indexes) · D2 SQL front end + single-table execution · D3 joins, aggregates, ordering · D4 serializable transactions (optimistic, over snapshots) · D5 single-node server, protocol, shell · D6 CRUD demo app and the v1.0 launch. *Depends on M8 (hard prerequisite: M7a).*
+- **M8b — (Optional capstone) COW B+Tree backend.** *Depends on D6 + the M0 interface.* **Time-boxed to four weeks**: the deliverable is the measured comparison, not the tree — run the M8 suite and ShaleDB on both backends. If the backend overruns, ship the harness and say what was not measured.
+- **M9 — (Optional) Single Raft group replication.** Engine becomes the replicated state machine behind Raft (election, log replication, snapshot = engine snapshot). *Depends on D6 (M7 technically).*
+- **M10 — (Stretch) Multi-Raft sharding + placement/metadata service + routing.** Range partitions, split/merge, PD-like metadata + TSO. *Depends on M9.*
 - **M11 — Percolator distributed transactions.** **Non-goal.** 2PC with a primary-key coordinator, TSO timestamps and lock/write column families is the natural next step after M10 and is recorded here so the shape is known — but it is out of scope for this project and is not drawn in the architecture diagrams. Reinstate it only if M10 ships and there is appetite left.
 
 ### F. Java-specific considerations

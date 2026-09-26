@@ -48,6 +48,9 @@ Scopes mirror packages and modules, so `git log --grep 'compaction'` is useful:
 `mvcc`, `recovery`, `key`, `coding`, `api`, `bench`, `raft`, `region`, `rpc`, `pd`,
 `docs`, `build`.
 
+ShaleDB and the capstones (ADR-0013): `record`, `catalog`, `sql`, `plan`, `exec`, `txn`,
+`server`, `demo`, `btree`.
+
 Use one scope. If a change genuinely spans three scopes it is probably three commits.
 
 ### Body
@@ -144,7 +147,8 @@ three to five words, describing the change, not the file it touches.
 
 | Prefix | For | Example |
 |---|---|---|
-| `mNN/` | Milestone feature work — the default for roadmap implementation. `NN` is the milestone number. | `m06/leveled-compaction` |
+| `mNN/` | Milestone feature work — the default for roadmap implementation. `NN` is the milestone number; slices keep their letter or half-step. | `m06/leveled-compaction`, `m07a/write-batch`, `m05-5/group-commit` |
+| `dNN/` | ShaleDB milestone work (D1–D6, ADR-0013) | `d02/sql-parser` |
 | `fix/` | Bug fix | `fix/wal-torn-tail` |
 | `perf/` | Optimisation (lands with a `Benchmark:` trailer) | `perf/skiplist-arena-offsets` |
 | `refactor/` | Behaviour-preserving restructure | `refactor/extract-block-builder` |

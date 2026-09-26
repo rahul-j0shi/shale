@@ -24,6 +24,12 @@ if anything is on it. It is wired into `check`, so `./gradlew build` enforces it
 `junit-jupiter`, `assertj-core`, `jqwik` (property-based testing), `jmh-core` and
 `jmh-generator-annprocess` (in `shale-bench`).
 
+**`shale-db`, `shale-server`, `shale-demo`, `shale-btree` runtime dependencies: none**
+(ADR-0013). The JDK's own modules — including `jdk.httpserver` and `java.net.http` — are the
+JDK, not dependencies. Each module applies the same `verifyNoRuntimeDependencies` check as
+`shale-core`. SQL parsing, planning, execution, concurrency control and the JSON codec are
+hand-written; admitting a library to any of them needs an ADR.
+
 **Permitted, `flotilla-*` runtime:** exactly one RPC stack (gRPC + protobuf, or Netty
 if hand-rolling the protocol — decided in an ADR, not ad hoc), plus SLF4J as a logging
 *facade* with a binding chosen only at the server entry point.
@@ -62,7 +68,8 @@ Target **JDK 25**. Use the modern language where it reduces ceremony, not for no
 - `Arena` / `MemorySegment` for all off-heap memory and memory-mapped files. Never
   `MappedByteBuffer` for new code — the 2 GiB `int`-indexing limit and the
   non-deterministic unmapping are exactly the problems `MemorySegment` fixes.
-- Virtual threads for the RPC/connection layer in `flotilla-server`.
+- Virtual threads for the RPC/connection layer in `flotilla-server` and for request handling
+  in `shale-server`.
 
 **Do not use:**
 - Virtual threads for compaction, flush, or any CPU-bound background work. Those want

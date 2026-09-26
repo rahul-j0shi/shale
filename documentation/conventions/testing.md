@@ -15,6 +15,7 @@ for advancing between milestones, and every one of them is a test result.
 | Property | `@Tag("property")` | ~2 min | Every build | ✅ M0 (untagged; runs in the default task) |
 | Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); fault injection at M5 |
 | Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag | ❌ M6 — needs compaction to be worth running |
+| Logic (ShaleDB) | (none; `.slt` files) | < 1 min | Every build | ❌ D2 — sqllogictest-style SQL suites and the differential query test |
 
 `./gradlew build` runs the first three; `crashTest` is a separate task. **This section is a
 specification, not a status report** — the last column says what exists. Where a tier
@@ -65,6 +66,15 @@ either opens correctly or reports `CorruptionException` — never both partly.**
 Systematic coverage beats random: for a small database, crash at *every* operation index
 and truncate at *every* byte offset. Both spaces are small enough to enumerate and both
 find real bugs immediately.
+
+### Logic (ShaleDB)
+*Not built. Arrives at **D2**.* SQL behaviour is specified by `.slt` files in
+`shale-db/src/test/resources/logic/`, in the style of SQLite's sqllogictest: `statement ok`,
+`statement error <text>`, and `query` blocks with expected rows. Alongside them, a differential
+test runs seeded random queries through the real planner and a naive reference executor and
+requires identical results. From D5, the crash tier also holds a **process-level kill test**:
+the server runs in a child JVM, is killed with SIGKILL mid-load, and every acknowledged commit
+must survive the restart.
 
 ### Soak
 *Not built. Arrives at **M6**: without compaction there is no backlog to soak, and the
