@@ -45,5 +45,11 @@ next week, or anything already decided by an existing ADR.
 | 0009 | Skiplist memtable: single writer, lock-free readers, on-heap | Accepted | partly |
 | 0010 | SSTable on-disk format: a LevelDB block table, uncompressed | Accepted | **no** |
 | 0011 | Read through one InternalIterator seam, merged by a heap, pinned by the cursor | Accepted | partly |
+| 0013 | Build a relational layer, ShaleDB, above the engine in new modules | Accepted | yes |
+
+**0012 is reserved** for the M5 manifest and recovery decision
+([plan](../roadmap/m5-manifest-and-recovery.md)); it is written, not skipped. The ADRs still to
+write, and the milestone that writes each, are scheduled in the
+[completion plan](../roadmap/completion-plan.md#5-decisions-still-to-make).
 
 Keep this table current in the same commit that adds the ADR.

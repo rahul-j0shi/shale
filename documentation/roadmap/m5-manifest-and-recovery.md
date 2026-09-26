@@ -1,7 +1,9 @@
 # M5 — Manifest and recovery: implementation plan
 
 **Status:** planning complete; implementation not started. Reviewed against `812f88c` on
-2026-09-10. **Depends on:** M4 and prerequisite tests already landed in `9780bfd` and `812f88c`.
+2026-09-10; baseline verified green on JDK 25 at `9cfa7d6` on 2026-09-26 (161 tests). **Depends
+on:** M4 and prerequisite tests already landed in `9780bfd` and `812f88c`. **Next after M5:**
+[M5.5](m5-5-concurrent-write-path.md), per the [completion plan](completion-plan.md).
 
 **Goal:** recover the committed live-file set from metadata, retain replayed data without an
 unconditional recovery flush, and reclaim obsolete files only after readers release them.
@@ -15,6 +17,7 @@ require a versioned `format.md`, golden fixtures and `Format-Change:`.
 1. **Version metadata:** define Version/VersionEdit and per-file number, level, size and key
    bounds; comparator identity, sequence/file-number high-water marks and exact WAL replay
    set or boundary. Specify how a durable edit excludes a flushed segment from replay.
+   Reserve M6's per-level compaction pointers now, so compaction needs no manifest bump.
 2. **Log framing:** decide reuse of WAL block framing without conflating manifest edits with
    mutation payloads. Specify magic/version, edit atomicity, unknown fields, torn-tail versus
    interior corruption, and manifest checkpoint/rollover behavior.
@@ -81,15 +84,7 @@ M5 does not need a production compactor.
 
 ## Subsequent milestones
 
-- **Before M5.5:** small benchmark baseline in shale-bench for durable writes and reads during
-  flush, recording commit, JDK, hardware and configuration; full comparative suite stays M8.
-- **M5.5:** define append/publish/durable watermarks, force leadership, rotation during force,
-  mixed durability, error propagation, bounded flush queues, stalls and close draining.
-  Prove batching with a controlled cohort; arbitrary scheduling need not batch requests.
-- **M6:** one correct compaction policy first, then the second for measured comparison. Define
-  sequence-correct point lookup: newest-file-first currently relies on flush chronology, which
-  compaction breaks. Add amplification counters and bounded-load/soak gates. Tombstone dropping
-  must exclude older values in all unselected files, including size-tiered runs.
-- **M7:** add snapshots with compaction retention, filters/cache and atomic batches in explicit
-  slices. M6 cannot pass a public snapshot gate before this API exists. Keep subcompactions and
-  advanced bloom allocation as follow-ups after baseline correctness and measurement.
+Each has its own plan, ordered in the [completion plan](completion-plan.md):
+[M5.5](m5-5-concurrent-write-path.md) (including the pre-M5.5 benchmark baseline),
+[M6](m6-compaction.md), [M7](m7-filters-cache-mvcc.md), [M8](m8-benchmark-suite.md), then the
+ShaleDB track D1–D6. The notes that used to live here moved into those plans.
