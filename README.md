@@ -1,110 +1,98 @@
-# Shale &nbsp;·&nbsp; Flotilla
+# ShaleDB
 
 [![build](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml/badge.svg)](https://github.com/rahul-j0shi/shale/actions/workflows/build.yml)
 
-A hand-written **LSM-tree storage engine** (`Shale`) in Java, the **relational database**
-planned on top of it (`ShaleDB` — SQL, indexes, serializable transactions, a server and a CRUD
-demo), and an optional **Raft-replicated, range-sharded store** (`Flotilla`) — every core
-mechanism implemented from first principles, with no third-party library for any of them.
+**A relational database built from scratch in Java, designed so the cost of every statement is
+visible — from the SQL down to the disk.** An LSM storage engine, a SQL layer with a planner and
+serializable transactions, and the PostgreSQL wire protocol, all hand-written with zero runtime
+dependencies.
 
-> **The prime directive: the implementation *is* the product.**
-> This is a study-and-portfolio project. Its value is that write-ahead logging, skiplists,
-> SSTable encoding, compaction, bloom filters, MVCC and consensus are each built by hand and
-> understood in depth. A dependency that implements a core concept is disallowed by rule —
-> and the build enforces it: `shale-core` resolves **zero** runtime dependencies, checked on
-> every push. See [`CLAUDE.md`](CLAUDE.md) §4.
+> **Status: the storage engine is built through M4; the database layers are planned.** What exists
+> today is a durable, crash-consistent LSM write and read path. The table below is honest about the
+> rest.
+
+## Why
+
+A database's real costs are hard to see, and hardest on LSM storage — the design under RocksDB,
+CockroachDB, TiKV and Cassandra. There a write's cost is paid later by compaction, a delete leaves
+a tombstone that slows future scans, and one `INSERT` into a table with two indexes becomes several
+writes plus a uniqueness read.
+
+Production systems expose fragments of this: PostgreSQL's buffer and WAL counts, CockroachDB's
+MVCC step counts, RocksDB's per-operation counters. Each lives inside millions of lines of code, and
+none follows one statement all the way from its plan to the compaction work it creates.
+
+ShaleDB does, in a codebase small enough to read end to end. When it is finished, `psql` connects
+to it and `EXPLAIN ANALYZE` reports each statement's plan together with its storage cost:
+- memtable and SSTable probes;
+- bloom-filter skips;
+- blocks read;
+- dead versions skipped;
+- WAL bytes;
+- the fsync it shared with other commits;
+- its estimated compaction debt.
+
+Cost can only be traced through layers you own, so every layer is written here. The full reasoning
+is in the [charter](documentation/roadmap/charter.md).
 
 ## What exists today
-
-**Built through M4.** The engine is durable, crash-consistent, and reads through a streaming
-merge. It has no compaction yet, so tables accumulate — it is an LSM *write and read path*,
-not yet a full LSM engine.
 
 | Component | State |
 |---|---|
 | WAL — LevelDB block log, CRC32C, torn-tail policy, replay recovery | ✅ M1 |
 | Memtable — hand-written skiplist, lock-free readers, immutable handoff | ✅ M2 |
 | SSTable — prefix-compressed blocks, restart points, index, versioned footer | ✅ M3 |
-| Flush — fsync + atomic rename *before* the WAL segment is dropped | ✅ M3 (synchronous) |
+| Flush — fsync + atomic rename *before* the WAL segment is dropped | ✅ M3 |
 | Reads — heap-based multi-way merge, reconciliation, tombstones, pinned tables | ✅ M4 |
-| Manifest, `CURRENT`, ref-counted file lifecycle | ❌ M5 |
-| Group commit, background flush, write stalls | ❌ M5.5 |
-| Compaction, bloom filters, block cache, MVCC snapshots | ❌ M6–M7 |
-| Benchmarks (`shale-bench` — JMH plugin wired, no benchmarks written) | ❌ M8 |
-| ShaleDB — record layer, SQL, planner, executor, transactions, server, CRUD demo | ❌ D1–D6 |
-| COW B+Tree backend *(optional)* | ❌ M8b |
-| `flotilla-raft`, `flotilla-server` *(optional; empty build shells)* | ❌ M9–M10 |
+| Manifest and safe file deletion · concurrent write path | ❌ M5 · M5.5 |
+| Compaction · batches, snapshots, bloom filters · benchmarks | ❌ M6 · M7 · M8 |
+| Record layer · SQL · joins · transactions | ❌ D1–D4 |
+| PostgreSQL protocol · `EXPLAIN ANALYZE` cost accounting · demo | ❌ D5–D7 |
 
-**How it is verified.** A crash test truncates the WAL at every byte offset and asserts
-recovery yields a clean prefix. A bit-flip-at-every-offset test asserts every SSTable
-corruption is detected. A frozen golden file guards the on-disk format against drift. A model
-harness runs thousands of random operations against a `TreeMap` oracle, restarting the engine
-mid-sequence. `./gradlew build` and `crashTest` are green on JDK 25.
+**How it is verified today.**
+- A crash test truncates the WAL at every byte offset and asserts recovery yields a clean prefix.
+- A bit-flip test at every byte offset asserts every SSTable corruption is detected.
+- Golden files freeze the on-disk formats.
+- A model harness runs thousands of random operations against a `TreeMap` oracle, restarting the
+  engine mid-sequence.
 
-## Why this project
-
-An LSM engine is dense with mechanisms that rarely appear in application code: append-only
-durability, crash recovery, immutable file lifecycles with reference counting, background
-compaction with backpressure, probabilistic membership, MVCC, and multi-way merge iteration.
-
-Its intellectual spine is the **RUM conjecture** (Athanassoulis et al., EDBT 2016): an access
-method can bound at most two of *read*, *update* and *memory* overhead. Owning the engine
-means owning those knobs — and being able to **measure** the tradeoff rather than assert it.
+`./gradlew build crashTest` is green on JDK 25 (161 tests).
 
 ## Architecture
 
 ```
-shale-demo ──▶ shale-server ──▶ shale-db ──▶ shale-core ◀── flotilla-raft ◀── flotilla-server
- (D6, app)      (D5, HTTP)      (D1–D4, SQL)   (engine)        (M9, optional)     (M10, stretch)
+psql · JDBC · demo app
+      │ PostgreSQL wire protocol
+shale-server  (D5)    sessions and protocol
+shale-db      (D1–D6) record layer · SQL · planner · executor · transactions · cost accounting
+      │ StorageBackend SPI
+shale-core    (M0–M7) WAL · memtable · SSTables · manifest · compaction · bloom filters
 ```
 
-`shale-core` is an embeddable single-node engine that **depends on nothing but the JDK**, and
-must never depend on SQL, networking, RPC or clustering code — that boundary is the architectural
-point of the project. ShaleDB sits *above* the engine's `StorageBackend` interface, the way
-MySQL sits on MyRocks ([ADR-0013](documentation/adr/0013-build-shaledb-relational-layer.md)). Full scope diagrams:
-[`documentation/architecture/project-scope.md`](documentation/architecture/project-scope.md).
-As-built designs, milestone by milestone:
-[`documentation/architecture/`](documentation/architecture/).
+`shale-core` depends on nothing but the JDK, and never on anything above it. The build checks
+both. Scope diagrams: [`project-scope.md`](documentation/architecture/project-scope.md); as-built
+designs per milestone: [`documentation/architecture/`](documentation/architecture/).
 
 ## Roadmap
 
-Strictly ordered; each milestone ends in a runnable, tested artifact. **v1.0 = Shale 1.0 +
-ShaleDB.** The [completion plan](documentation/roadmap/completion-plan.md) orders every
-remaining milestone, with estimates, cut lines and a per-milestone plan.
-
-| | Milestone | Yields |
-|---|---|---|
-| **M0–M4** | *Complete* | SPI · internal-key encoding · WAL · skiplist · SSTable + flush · merge iterator |
-| **M5** | Manifest + recovery hardening | Version edits, atomic install, `CURRENT`, ref-counted lifecycle |
-| **M5.5** | Concurrent write path | fsync outside the write lock, group commit, background flush + write stalls |
-| **M6** | Compaction | Leveled and size-tiered (order set by the M6 ADR); scoring, picking, write stalls, amplification counters |
-| **M7a–c** | MVCC, filters, cache | Atomic batches + snapshots, per-SSTable bloom, block/table cache |
-| **M8** | Benchmark suite | db_bench + YCSB A–F; the RUM tradeoff measured within the LSM — **Shale 1.0** |
-| **D1–D4** | ShaleDB | Order-preserving keys + catalog · SQL parser, planner, Volcano executor · joins + aggregates · serializable OCC transactions |
-| **D5–D6** | Server + demo | HTTP/JSON server + shell · CRUD app with a live engine panel and a `kill -9` demo — **v1.0** |
-| **M8b** | COW B+Tree *(optional)* | Second backend; the same SQL layer and benchmarks on both |
-| **M9–M10** | Flotilla *(optional / stretch)* | Single Raft group; then multi-Raft range sharding |
-
-Charter, component inventory and citations:
-[`documentation/roadmap/shale-roadmap.md`](documentation/roadmap/shale-roadmap.md). Percolator
-transactions (M11) are a recorded **non-goal**. A dated assessment of the project — verified
-findings and the plan to completion — is in
-[`documentation/assessments/`](documentation/assessments/).
+Strictly ordered; each milestone ends in a tested, tagged artifact. **Shale 1.0** (the engine,
+measured) is M8; **v1.0** (the database and demo) is D7. The
+[completion plan](documentation/roadmap/completion-plan.md) has the per-milestone plans,
+estimates and cut lines; the [changelog](CHANGELOG.md) has what shipped.
 
 ## Building
 
-Target JDK **25 (LTS)**; off-heap work uses the Foreign Function & Memory API.
+Target JDK **25**, vendored into the repository by the bootstrap script:
 
 ```bash
-./gradlew build      # format, lint, compile, N1 dependency check, fast tests
+./scripts/bootstrap.sh && source scripts/env.sh
+./gradlew build      # format, lint, compile, dependency check, fast tests
 ./gradlew crashTest  # crash-recovery suite
 ```
 
 ## References
 
-Alex Petrov, *Database Internals* (the spine); the LSM-Tree paper (O'Neil et al., 1996); Raft
-(Ongaro & Ousterhout, 2014); Monkey (Dayan et al., 2017); Percolator (Peng & Dabek, 2010); and
-skyzh's *mini-lsm*. Per-component citations live alongside each type.
-
-Everything written about the project is mapped in
-[`documentation/README.md`](documentation/README.md).
+Petrov, *Database Internals*; O'Neil et al., "The Log-Structured Merge-Tree" (1996); LevelDB and
+the RocksDB wiki; Matsunobu et al., "MyRocks" (VLDB 2020); Graefe, "Volcano" (1994); Kung &
+Robinson, "Optimistic Methods for Concurrency Control" (1981). Per-component citations live beside
+each type, and every expensive decision is an [ADR](documentation/adr/README.md).
