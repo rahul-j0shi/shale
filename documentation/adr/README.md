@@ -36,7 +36,7 @@ next week, or anything already decided by an existing ADR.
 |---|---|---|---|
 | 0001 | Record architecture decisions | Accepted | yes |
 | 0002 | Hand-write all core storage mechanisms | Accepted | no |
-| 0003 | Single repository, four Gradle modules | Accepted | yes |
+| 0003 | Single repository, four Gradle modules | Accepted (0014 proposes superseding it) | yes |
 | 0004 | Internal key encoding | Accepted | **no** |
 | 0005 | Little-endian fixed-width integers | Accepted | **no** |
 | 0006 | Define the StorageBackend SPI | Accepted | **no** |
@@ -46,6 +46,7 @@ next week, or anything already decided by an existing ADR.
 | 0010 | SSTable on-disk format: a LevelDB block table, uncompressed | Accepted | **no** |
 | 0011 | Read through one InternalIterator seam, merged by a heap, pinned by the cursor | Accepted | partly |
 | 0013 | Build a relational layer, ShaleDB, above the engine in new modules | Accepted | yes |
+| 0014 | Drop Flotilla from the project's scope | Proposed | yes |
 
 **0012 is reserved** for the M5 manifest and recovery decision
 ([plan](../roadmap/m5-manifest-and-recovery.md)); it is written, not skipped. The ADRs still to

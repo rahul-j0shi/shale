@@ -1,6 +1,6 @@
 # M9 — Single Raft group (optional): implementation plan
 
-**Status:** planned 2026-09-26; optional, after v1.0 (D6). **Depends on:** M7a (the engine
+**Status:** dropped from scope 2026-09-26 by [ADR-0014](../../adr/0014-drop-flotilla-from-scope.md); kept as a starting point for any separate follow-on project. **Depends on:** M7a (the engine
 `Snapshot` becomes the Raft snapshot; a `WriteBatch` is the replicated command), the
 `StorageBackend` SPI. **Fills:** the existing `flotilla-raft` module shell.
 

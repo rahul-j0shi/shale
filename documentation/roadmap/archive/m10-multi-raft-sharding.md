@@ -1,7 +1,6 @@
 # M10 — Multi-Raft range sharding (stretch): implementation plan
 
-**Status:** planned 2026-09-26; a stretch goal, attempted only after M9 ships and only if there
-is appetite left. **Depends on:** M9. **Fills:** the existing `flotilla-server` module shell.
+**Status:** dropped from scope 2026-09-26 by [ADR-0014](../../adr/0014-drop-flotilla-from-scope.md); kept as a starting point for any separate follow-on project. **Depends on:** M9. **Fills:** the existing `flotilla-server` module shell.
 
 **Goal:** split the key space into Regions, each its own Raft group, with a placement driver
 that tracks, splits and rebalances them and a router that sends each request to the right
