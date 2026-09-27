@@ -40,3 +40,23 @@ val verifyNoRuntimeDependencies by
     }
 
 tasks.named("check") { dependsOn(verifyNoRuntimeDependencies) }
+
+// Lets an application use the engine before any public release: `./gradlew
+// :shale-core:publishToMavenLocal` installs dev.shale:shale-core into ~/.m2, and a project then
+// depends on it like any library (documentation/guides/embedding-shale.md). maven-publish is part
+// of Gradle, not a dependency; the published artifact still has zero runtime dependencies (N1).
+apply(plugin = "maven-publish")
+
+extensions.configure<JavaPluginExtension> { withSourcesJar() }
+
+extensions.configure<PublishingExtension> {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            pom {
+                name.set("shale-core")
+                description.set("Shale: a hand-written LSM-tree storage engine with zero runtime dependencies.")
+            }
+        }
+    }
+}
