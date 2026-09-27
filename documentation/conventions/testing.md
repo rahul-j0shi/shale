@@ -19,7 +19,7 @@ for advancing between milestones, and every one of them is a test result.
 
 `./gradlew build` runs the first three; `crashTest` is a separate task. **This section is a
 specification, not a status report** — the last column says what exists. Where a tier
-describes machinery that is not built (the `FaultyFileSystem` below, the soak workload),
+describes machinery that is not built (the `FaultInjectionEnv` below, the soak workload),
 the milestone that builds it is named. Do not read an unbuilt tier as a claim.
 
 ### Unit
@@ -53,12 +53,20 @@ jqwik, with shrinking. Properties worth stating:
 
 ### Crash
 *Partly built (M1): `ShaleCrashTest` truncates the WAL at every byte offset. The
-`FaultyFileSystem` below arrives at **M5**, with the manifest it needs to test.*
+`FaultInjectionEnv` below arrives at **M5** (its plan, §2.7), with the manifest it needs to test.*
 
-Fault injection through a `FaultyFileSystem` wrapper that can, deterministically:
-kill at a chosen operation index, truncate a file at an arbitrary offset, write a
-partial (torn) record, fail an fsync, reorder writes not separated by an fsync, return
-`ENOSPC`, and corrupt a chosen byte.
+All engine file I/O goes through an `Env` (LevelDB's name). Crash tests swap in
+`FaultInjectionEnv` (after RocksDB's `FaultInjectionTestEnv`), which wraps real files and can,
+deterministically:
+- **crash at a chosen operation index** — every create, append, sync, rename, delete and
+  directory sync is numbered;
+- **simulate power loss** — truncate each file to its length at its last sync, or keep a seeded
+  torn prefix of the unsynced tail, and undo every create, rename or delete not followed by a
+  directory sync. Each file is truncated independently, which also covers writes reordered
+  across files;
+- **fail one operation** with a real `IOException` (an fsync error, `ENOSPC`).
+
+Byte corruption is covered separately, by the bit-flip tests of every format.
 
 The core assertion is always the same: **no acknowledged write is lost, and the engine
 either opens correctly or reports `CorruptionException` — never both partly.**
