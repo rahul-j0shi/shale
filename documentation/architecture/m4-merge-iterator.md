@@ -1,8 +1,8 @@
 # M4 as-built — merge iteration and reconciliation
 
 The detail behind the read path rebuilt at M4 in the
-[README overview](../../README.md#architecture--the-complete-project-scope). Everything here is in the
-code at tag `m4-merge`; see the [M4 release note](../roadmap/m4-release-note.md) and the decision in
+[README overview](../../README.md#architecture). Everything here is in the
+code at tag `m4-merge`; see the [changelog entry](../../CHANGELOG.md#m4--multi-sstable-reads-and-the-merge-iterator--m4-merge) and the decision in
 [ADR-0011](../adr/0011-internal-iterator-seam.md).
 
 M4's one sentence: **every read source now presents the same iterator, a heap merges them into one
@@ -143,8 +143,8 @@ returning 0 for distinct elements orders them arbitrarily, and "arbitrary but de
 difference between a reproducible bug and a heisenbug. The tie-break carries no precedence meaning.
 
 **On `java.util.PriorityQueue` and N1.** N1 requires the project's *subjects* to be hand-written and
-lists them: skiplists, bloom filters, serialisation frameworks, compression codecs, Raft, caches,
-B-trees. A priority queue is on none of them, and CLAUDE.md permits JDK structures that are not a
+lists them: skiplists, bloom filters, serialisation frameworks, compression codecs, SQL parsers and
+query engines. A priority queue is on none of them, and CLAUDE.md permits JDK structures that are not a
 project subject. The subject here is merge-iteration — the seek-per-source, the pop-step-push cycle,
 the reconciliation above it — and all of that is written out. ADR-0011 records this as a judgment
 call about where N1's boundary falls; a hand-written binary heap would be contained entirely within

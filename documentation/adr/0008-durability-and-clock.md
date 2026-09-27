@@ -67,8 +67,8 @@ Three modes keep the read/write/space knob explicit and testable, which is the p
 whole premise. Leader/follower batching is the standard group-commit shape and turns the
 fixed cost of `fsync` from per-write into per-batch without ever acknowledging before the
 force that covers the record — so the durability guarantee is never weakened for speed
-(D4). Injecting the clock is what makes the crash and latency tests deterministic and is the
-on-ramp to simulation testing at M9 (testing.md §2).
+(D4). Injecting the clock is what makes the crash and latency tests deterministic (testing.md
+§2).
 
 ## Consequences
 

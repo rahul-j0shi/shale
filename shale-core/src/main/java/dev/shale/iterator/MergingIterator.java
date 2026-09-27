@@ -32,9 +32,9 @@ import java.util.function.Consumer;
  *
  * <p><b>Why {@code java.util.PriorityQueue} and not a hand-written heap.</b> N1 requires the
  * project's <em>subjects</em> to be hand-written, and lists them: skiplists and concurrent sorted
- * maps, bloom filters, serialisation frameworks, compression codecs, Raft, caches, B-trees. A
- * priority queue is on none of them, and CLAUDE.md explicitly permits JDK structures that are not a
- * project subject. The thing being learned here is merge-iteration — the seek-per-source, the
+ * maps, bloom filters, serialisation frameworks, compression codecs, SQL parsers and query engines.
+ * A priority queue is on none of them, and CLAUDE.md explicitly permits JDK structures that are not
+ * a project subject. The thing being learned here is merge-iteration — the seek-per-source, the
  * pop-step-push cycle, the reconciliation rule above it — all of which is written out. ADR-0011
  * records this as a judgment call about where N1's boundary falls, and swapping in a hand-written
  * binary heap later is contained entirely within this class.

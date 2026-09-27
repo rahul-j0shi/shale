@@ -15,10 +15,11 @@ for advancing between milestones, and every one of them is a test result.
 | Property | `@Tag("property")` | ~2 min | Every build | ✅ M0 (untagged; runs in the default task) |
 | Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); fault injection at M5 |
 | Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag | ❌ M6 — needs compaction to be worth running |
+| Logic (ShaleDB) | (none; `.slt` files) | < 1 min | Every build | ❌ D2 — sqllogictest-style SQL suites and the differential query test |
 
 `./gradlew build` runs the first three; `crashTest` is a separate task. **This section is a
 specification, not a status report** — the last column says what exists. Where a tier
-describes machinery that is not built (the `FaultyFileSystem` below, the soak workload),
+describes machinery that is not built (the `FaultInjectionEnv` below, the soak workload),
 the milestone that builds it is named. Do not read an unbuilt tier as a claim.
 
 ### Unit
@@ -52,12 +53,20 @@ jqwik, with shrinking. Properties worth stating:
 
 ### Crash
 *Partly built (M1): `ShaleCrashTest` truncates the WAL at every byte offset. The
-`FaultyFileSystem` below arrives at **M5**, with the manifest it needs to test.*
+`FaultInjectionEnv` below arrives at **M5** (its plan, §2.7), with the manifest it needs to test.*
 
-Fault injection through a `FaultyFileSystem` wrapper that can, deterministically:
-kill at a chosen operation index, truncate a file at an arbitrary offset, write a
-partial (torn) record, fail an fsync, reorder writes not separated by an fsync, return
-`ENOSPC`, and corrupt a chosen byte.
+All engine file I/O goes through an `Env` (LevelDB's name). Crash tests swap in
+`FaultInjectionEnv` (after RocksDB's `FaultInjectionTestEnv`), which wraps real files and can,
+deterministically:
+- **crash at a chosen operation index** — every create, append, sync, rename, delete and
+  directory sync is numbered;
+- **simulate power loss** — truncate each file to its length at its last sync, or keep a seeded
+  torn prefix of the unsynced tail, and undo every create, rename or delete not followed by a
+  directory sync. Each file is truncated independently, which also covers writes reordered
+  across files;
+- **fail one operation** with a real `IOException` (an fsync error, `ENOSPC`).
+
+Byte corruption is covered separately, by the bit-flip tests of every format.
 
 The core assertion is always the same: **no acknowledged write is lost, and the engine
 either opens correctly or reports `CorruptionException` — never both partly.**
@@ -65,6 +74,15 @@ either opens correctly or reports `CorruptionException` — never both partly.**
 Systematic coverage beats random: for a small database, crash at *every* operation index
 and truncate at *every* byte offset. Both spaces are small enough to enumerate and both
 find real bugs immediately.
+
+### Logic (ShaleDB)
+*Not built. Arrives at **D2**.* SQL behaviour is specified by `.slt` files in
+`shale-db/src/test/resources/logic/`, in the style of SQLite's sqllogictest: `statement ok`,
+`statement error <text>`, and `query` blocks with expected rows. Alongside them, a differential
+test runs seeded random queries through the real planner and a naive reference executor and
+requires identical results. From D5, the crash tier also holds a **process-level kill test**:
+the server runs in a child JVM, is killed with SIGKILL mid-load, and every acknowledged commit
+must survive the restart.
 
 ### Soak
 *Not built. Arrives at **M6**: without compaction there is no backlog to soak, and the
@@ -98,10 +116,9 @@ suite to produce.
   tests use a deterministic executor that runs tasks on demand, so a test can say
   "flush now, then compact once, then read" instead of waiting and hoping.
 
-This discipline is also the on-ramp to deterministic simulation testing
-(FoundationDB-style) for the Flotilla layer at M9. If the engine is already clock-,
-random-, and executor-injected, simulation is an extension rather than a rewrite.
-Design for it now even if you never build it.
+The same discipline is what lets the M5 crash tests run the engine over a simulated
+filesystem (FoundationDB-style): if the engine is already clock-, random-, and
+executor-injected, simulation is an extension rather than a rewrite.
 
 ---
 
@@ -160,8 +177,8 @@ Benchmarks live in `shale-bench`, run through JMH, and never run in the normal b
   that are wrong by an order of magnitude because of dead-code elimination and
   constant folding.
 - Macro workloads mirror recognisable names so results are comparable to published
-  numbers: `fillseq`, `fillrandom`, `readrandom`, `readwhilewriting`, `seekrandom`,
-  and YCSB A–F.
+  numbers: `fillseq`, `fillrandom`, `readrandom`, `readwhilewriting`, `seekrandom`.
+  Reference baselines (RocksDB, SQLite) run the same workloads (ADR-0013).
 - Every benchmark run records: commit SHA, JDK version, hardware, and full engine
   configuration. A number without its configuration is not a result.
 - Benchmark results referenced in a `perf` commit are committed under

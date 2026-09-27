@@ -1,6 +1,6 @@
 # Documentation map
 
-Everything written about Shale and Flotilla lives here. This page is the door: it says what each kind
+Everything written about ShaleDB and its engine, Shale, lives here. This page is the door: it says what each kind
 of document is for and the order to read them in. The standard these docs are held to — teach, don't
 just record — is [`conventions/documentation.md`](conventions/documentation.md).
 
@@ -11,27 +11,30 @@ status, then come back here.
 
 ## Start here
 
-1. **[README](../README.md)** — what the project is, why it exists, and an honest built-vs-planned
-   status table. The full scope diagrams are in
-   [architecture/project-scope.md](architecture/project-scope.md).
-2. **[roadmap/shale-roadmap.md](roadmap/shale-roadmap.md)** — the charter: goals, non-goals, the RUM
-   tradeoff at the heart of it, and the milestone build order (M0 → M10; M11 is a non-goal).
-3. **A milestone, end to end** — pick one and read its three faces: the **decision** (`adr/`), the
+1. **[README](../README.md)** — what the project is, and an honest built-vs-planned status table.
+   The full scope diagrams are in [architecture/project-scope.md](architecture/project-scope.md).
+2. **[roadmap/charter.md](roadmap/charter.md)** — why the project exists (a database whose every
+   statement's cost is visible from SQL to disk), the design choices that follow, goals, non-goals,
+   and the milestone order (engine M0 → M8, database D1 → D7).
+3. **[roadmap/completion-plan.md](roadmap/completion-plan.md)** — the working plan: every remaining
+   milestone in order, with its plan file, estimate, open decisions, cut lines and status. Start
+   implementation here.
+4. **A milestone, end to end** — pick one and read its three faces: the **decision** (`adr/`), the
    **as-built** explainer (`architecture/`), and, for on-disk work, the **byte layout**
    (`<package>/format.md`). M3 is a good example: [ADR-0010](adr/0010-sstable-block-table-format.md) →
    [m3-sstable-and-flush](architecture/m3-sstable-and-flush.md) →
    [format.md](../shale-core/src/main/java/dev/shale/sstable/format.md).
 
-## The five kinds of document
+## The kinds of document
 
 | Area | What it answers | Index |
 |---|---|---|
-| **Roadmap** | *What are we building, and in what order?* Charter, per-milestone plans, release notes. | [roadmap/](roadmap/) |
+| **Roadmap** | *Why, what, and in what order?* The charter, the completion plan, a plan per remaining milestone. | [charter](roadmap/charter.md) · [completion plan](roadmap/completion-plan.md) |
+| **Changelog** | *What has shipped?* One entry per finished milestone. | [CHANGELOG.md](../CHANGELOG.md) |
 | **ADRs** | *Why is it built this way?* One record per expensive, hard-to-reverse decision. | [adr/README.md](adr/README.md) |
 | **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
 | **Conventions** | *What are the rules?* Naming, style, commits, concurrency, formats, errors, testing, docs. | [conventions/](conventions/) |
 | **`format.md`** | *What exactly is on disk?* Byte tables + worked hex, beside the code, pinned by golden files. | e.g. [wal](../shale-core/src/main/java/dev/shale/wal/format.md), [sstable](../shale-core/src/main/java/dev/shale/sstable/format.md) |
-| **Assessments** | *Where does the project actually stand?* Dated whole-project reviews: verified findings and what to do next. | [assessments/](assessments/) |
 
 ## How a milestone's docs fit together
 
@@ -45,7 +48,7 @@ flowchart LR
   fmt --> code["code + tests<br/>(package-info · Javadoc · golden)"]
   adr --> code
   code --> arch["architecture: as-built<br/>(HLD + LLD, diagrams)"]
-  arch --> note["roadmap: release note<br/>+ README status"]
+  arch --> note["CHANGELOG entry<br/>+ README status"]
 ```
 
 ## The rules (conventions)
@@ -66,6 +69,7 @@ flowchart LR
 Through **M4** (tag `m4-merge`): a durable, crash-consistent engine with a write-ahead log, a
 hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming reads
 through a heap-based multi-way merge with reconciliation. See the
-[README status](../README.md) and the newest [release note](roadmap/) for specifics; the
+[README status](../README.md) and the [changelog](../CHANGELOG.md) for specifics, and the
+[completion plan](roadmap/completion-plan.md) for what comes next; the
 [architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed
 milestone.

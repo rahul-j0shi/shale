@@ -6,9 +6,10 @@ The JMH plugin is applied and `shale-core` is on the benchmark classpath, so
 
 **Why it is empty.** `commits.md` §4 rejects a `perf` commit without a `Benchmark:` trailer,
 and nothing in the engine has been optimised yet: correctness first, measurement second,
-optimisation third. There has been nothing worth measuring that a microbenchmark would answer.
+optimisation third.
 
-**When that changes.** The first benchmarks arrive alongside compaction (M6), because
-write/read/space amplification counters are what make the RUM tradeoff — the project's stated
-thesis — measurable instead of asserted. M8 adds the YCSB A–F and db_bench-style macro
-workloads and runs them across both backends.
+**When that changes.** A small baseline arrives before the write path changes (M5.5). The full
+engine suite — db_bench-style workloads, the amplification counters, and RocksDB as a reference
+baseline — is M8. The SQL-level workload, with SQLite as its reference, arrives with the demo (D7).
+This is the only module allowed to depend on reference baselines, and no production module may
+depend on it (ADR-0013).

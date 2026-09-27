@@ -57,17 +57,11 @@ compaction pipeline add noise without adding safety.
 
 ## 2. Logging
 
-**Status: not built, and not buildable in `shale-core` as written.** Nothing in the engine
-logs today. SLF4J is the intended facade, but `java-style.md` §1 permits it only in
-`flotilla-*`: `shale-core` has *zero* runtime dependencies, and adding one — even a facade —
-needs an ADR amending the allowlist. Until that ADR exists, this section governs `flotilla-*`
-and is a design target for the engine, not a rule it breaks. The engine's alternative is a
-tiny internal logging seam (the `Metrics` interface is the precedent) with the SLF4J binding
-supplied by the embedding application; decide it in the ADR, not here.
-
-The rules below apply wherever logging does exist.
-
-SLF4J as the facade. `shale-core` declares no binding — the application chooses.
+**Status: not built.** Nothing logs today. When logging arrives it uses the JDK's own facade,
+`System.Logger` (JEP 264). It is part of the JDK, so it keeps every hand-written module at zero
+runtime dependencies (`java-style.md` §1), and the embedding application routes it wherever it
+likes through `System.LoggerFinder`. No module declares a logging binding; `shale-demo` may bind
+one because it is an ordinary application.
 
 ### Levels
 
@@ -75,7 +69,7 @@ SLF4J as the facade. `shale-core` declares no binding — the application choose
 |---|---|---|
 | `ERROR` | Corruption, background thread death, engine failed | Should page a human |
 | `WARN` | Write stall, recovery discarded a torn tail, retry, degraded operation | Rare, always actionable |
-| `INFO` | Lifecycle: open, close, flush completed, compaction completed, recovery summary, Raft leadership change | Bounded per operation, never per key |
+| `INFO` | Lifecycle: open, close, flush completed, compaction completed, recovery summary, client session opened or closed | Bounded per operation, never per key |
 | `DEBUG` | Compaction picking decisions, version installs, per-file detail | Off in production |
 | `TRACE` | Per-record, per-block detail | Never enabled outside a debugging session |
 
@@ -84,13 +78,13 @@ gigabytes and will change the performance profile you are trying to measure.
 
 ### Rules
 
-- Parameterised messages only: `log.info("flushed memtable to {} ({} bytes, {} keys)",
-  file, bytes, keys)`. Never string concatenation, never `String.format` — both build
-  the string even when the level is disabled.
-- Loggers are `private static final Logger log = LoggerFactory.getLogger(X.class);`.
+- Parameterised messages only: `log.log(Level.INFO, "flushed memtable to {0} ({1} bytes, {2}
+  keys)", file, bytes, keys)`, or a `Supplier<String>` for anything costly. Never string
+  concatenation, never `String.format` — both build the string even when the level is disabled.
+- Loggers are `private static final System.Logger log = System.getLogger(X.class.getName());`.
   Always named `log`.
-- **Every `INFO` and above includes identifying context**: the file number, the region
-  id, the sequence number range, the level. A log line you cannot correlate to a
+- **Every `INFO` and above includes identifying context**: the file number, the sequence
+  number range, the level, the session id. A log line you cannot correlate to a
   specific artifact is decoration.
 - Log the outcome of an operation, not its beginning, unless the operation is long
   enough that its start is useful on its own (compaction, recovery — log both, and
@@ -141,7 +135,7 @@ application binds it to whatever it likes.
 
 Naming: lowercase dotted, most-general segment first, unit as the final segment when
 not obvious (`.bytes`, `.count`, `.duration`). Never embed a variable in the metric
-name — use tags/labels for level, region id, and file kind.
+name — use tags/labels for level, table id, and file kind.
 
 Every metric is readable through a public API and dumped in the engine's `INFO`-level
 statistics summary on close, so a benchmark run always ends with the numbers.

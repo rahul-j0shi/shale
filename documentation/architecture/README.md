@@ -1,7 +1,7 @@
 # Architecture — as-built detail
 
 [project-scope.md](project-scope.md) draws the **complete project scope** — the whole system,
-built and planned, in four overview diagrams (modules, the engine, Flotilla, verification).
+built and planned, in four overview diagrams (modules, the engine, the database layer, verification).
 The top-level [README](../../README.md) keeps only the status table and the module graph.
 
 This folder holds the finer-grained **as-built** designs: the actual types and flows that
@@ -23,7 +23,7 @@ Every page answers the same three questions, in order:
 
 | Page | | |
 |---|---|---|
-| [project-scope.md](project-scope.md) | The complete component scope, built and planned — modules, engine, Flotilla, verification | |
+| [project-scope.md](project-scope.md) | The complete component scope, built and planned — modules, engine, database layer, verification | |
 
 | Milestone | Doc | HLD | LLD |
 |---|---|---|---|
@@ -33,5 +33,5 @@ Every page answers the same three questions, in order:
 | M3 | [m3-sstable-and-flush.md](m3-sstable-and-flush.md) | Flush, reads across tables, recovery-flush | SSTable block-table format, the block reader, the types |
 | M4 | [m4-merge-iterator.md](m4-merge-iterator.md) | The two read paths, a scan end to end, the reconciliation rules | The heap, the two-level SSTable iterator, cursor ownership |
 
-Each milestone's release note lives under [`../roadmap/`](../roadmap/); the decisions behind
+What each milestone shipped is in the [changelog](../../CHANGELOG.md); the decisions behind
 these shapes are in [`../adr/`](../adr/).

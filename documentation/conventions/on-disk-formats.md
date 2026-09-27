@@ -140,14 +140,10 @@ deliberation now.
 
 ## 6. Wire formats
 
-The Flotilla RPC schema follows the same discipline with different tooling: protobuf
-field numbers are never reused or renumbered, fields are added as optional and never
-made required, enums always carry an `UNKNOWN = 0` default, and every message is
-versioned by the service, not by ad hoc fields.
-
-The `.proto` files live in `flotilla-server/src/main/proto/` and are the authoritative
-definition. Do not hand-edit generated code. (None exist yet; the RPC layer is M10.)
-
-Note the deliberate asymmetry: protobuf is permitted on the wire but banned for on-disk
-formats (`java-style.md` §1). The wire format is plumbing; the storage format is the
-subject of the project.
+ShaleDB has one wire format: the **PostgreSQL frontend/backend protocol, version 3.0**, spoken by
+`shale-server` (D5). We do not own it, so the discipline is the reverse of an on-disk format:
+conform, never extend. The subset implemented is listed in `shale-server`'s `protocol.md`, message
+by message, with the PostgreSQL documentation as the authority. Anything outside the subset gets a
+protocol-correct `ErrorResponse` (SQLSTATE `0A000`, feature not supported), never a dropped
+connection or a silently misread message. Every message's length is bounds-checked before its body
+is read, exactly as on disk (§2).

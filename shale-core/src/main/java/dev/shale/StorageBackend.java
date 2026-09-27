@@ -2,8 +2,8 @@ package dev.shale;
 
 /**
  * The single-node storage SPI: a durable, ordered {@code byte[]}→{@code byte[]} map. This is the
- * seam behind which the LSM engine and, at M8, a copy-on-write B+Tree both sit, so the same
- * benchmark harness can compare them (ADR-0006, roadmap §D).
+ * seam the model harness and the benchmarks drive, and the one ShaleDB's record layer maps tables
+ * and indexes onto (ADR-0006, ADR-0013).
  *
  * <p>Keys and values are opaque bytes; ordering is defined entirely by {@link #comparator()}. Every
  * acknowledging write takes an explicit {@link Durability} (N3).

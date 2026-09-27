@@ -45,8 +45,10 @@ Conventional Commits, with project-specific scopes and trailers.
 Scopes mirror packages and modules, so `git log --grep 'compaction'` is useful:
 
 `wal`, `memtable`, `sstable`, `compaction`, `filter`, `manifest`, `iterator`, `cache`,
-`mvcc`, `recovery`, `key`, `coding`, `api`, `bench`, `raft`, `region`, `rpc`, `pd`,
-`docs`, `build`.
+`mvcc`, `recovery`, `key`, `coding`, `api`, `bench`, `docs`, `build`.
+
+ShaleDB (ADR-0013): `record`, `catalog`, `sql`, `plan`, `exec`, `txn`, `cost`, `pgwire`,
+`demo`.
 
 Use one scope. If a change genuinely spans three scopes it is probably three commits.
 
@@ -144,7 +146,8 @@ three to five words, describing the change, not the file it touches.
 
 | Prefix | For | Example |
 |---|---|---|
-| `mNN/` | Milestone feature work — the default for roadmap implementation. `NN` is the milestone number. | `m06/leveled-compaction` |
+| `mNN/` | Milestone feature work — the default for roadmap implementation. `NN` is the milestone number; slices keep their letter or half-step. | `m06/leveled-compaction`, `m07a/write-batch`, `m05-5/group-commit` |
+| `dNN/` | ShaleDB milestone work (D1–D6, ADR-0013) | `d02/sql-parser` |
 | `fix/` | Bug fix | `fix/wal-torn-tail` |
 | `perf/` | Optimisation (lands with a `Benchmark:` trailer) | `perf/skiplist-arena-offsets` |
 | `refactor/` | Behaviour-preserving restructure | `refactor/extract-block-builder` |
@@ -175,8 +178,8 @@ encoding, or the module graph — does **not** open with code. It opens with the
 4. Integrate only when green: `./gradlew build` and `crashTest` pass on the branch tip.
 5. Delete the branch once it has landed. Stale branches are noise.
 
-Tag milestone completions on `main`: `m06-compaction`, and write a short release note
-in `documentation/roadmap/`. Those tags are the checkpoints you will demo from.
+Tag milestone completions on `main`: `m06-compaction`, and add a short entry to
+`CHANGELOG.md`. Those tags are the checkpoints you will demo from.
 
 ---
 

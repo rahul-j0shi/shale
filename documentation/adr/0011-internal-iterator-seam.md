@@ -125,8 +125,8 @@ that `Cursor.close()` stops being optional: a leaked cursor pins file handles, a
 must prove that closing one drops exactly the references it took.
 
 **Why `PriorityQueue`.** N1 names what must be hand-written: skiplists and concurrent sorted
-maps, bloom filters, serialisation frameworks, compression codecs, Raft, caches, B-trees. A
-priority queue is on none of those lists, and CLAUDE.md explicitly permits JDK structures that
+maps, bloom filters, on-disk serialisation frameworks, compression codecs, SQL parsers and
+query engines. A priority queue is on none of those lists, and CLAUDE.md explicitly permits JDK structures that
 are "not a project subject (e.g. `ArrayDeque`, `ReentrantLock`)". The roadmap component here
 is *the merge iterator* — the reconciliation rule, the seek-per-source, the tombstone
 handling — and we are writing all of it. The heap underneath is plumbing in the same category
@@ -174,4 +174,4 @@ costs only performance.
   storage.
 - ADR-0004 (internal key encoding — the user-asc/sequence-desc order this merge consumes).
 - ADR-0010 (SSTable block table — the index/data block structure the two-level iterator walks).
-- `documentation/roadmap/shale-roadmap.md` §E, M4.
+- `documentation/roadmap/charter.md` §E, M4.

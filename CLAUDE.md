@@ -7,14 +7,17 @@ your first edit in a session. If a rule here conflicts with your defaults, this 
 
 ## 1. What this project is
 
-**Shale** is a hand-written LSM-tree storage engine. **Flotilla** is the Raft-replicated,
-range-sharded distributed store built on top of it. Both live in this repository.
+**ShaleDB** is a relational database built from scratch in Java, designed so the cost of every
+statement is visible from the SQL down to the disk. **Shale** is its hand-written LSM storage
+engine (`shale-core`); the relational layer, the PostgreSQL wire-protocol server and the demo sit
+on top. The purpose and scope are in `documentation/roadmap/charter.md` and ADR-0013. Replication,
+sharding, a second storage backend and a block cache are out of scope — do not add them.
 
 **The prime directive: the implementation *is* the product.**
 
 This is a learning and portfolio project. Its value is that every core mechanism —
-write-ahead logging, skiplists, SSTable encoding, compaction, bloom filters, MVCC,
-consensus — is implemented from first principles and understood in depth. A working
+write-ahead logging, skiplists, SSTable encoding, compaction, bloom filters, MVCC, SQL
+planning and execution, concurrency control — is implemented from first principles and understood in depth. A working
 system assembled from libraries would be worthless here even if it were faster and
 more correct.
 
@@ -30,34 +33,47 @@ Therefore: **never introduce a dependency that implements a core concept.** See 
 ├── CONTRIBUTING.md            human-facing workflow
 ├── .editorconfig              whitespace/encoding, IDE-agnostic
 ├── .gitmessage                commit template (git config commit.template .gitmessage)
+├── CHANGELOG.md               what each finished milestone shipped
 ├── config/checkstyle/         enforced style + banned APIs
 ├── documentation/
-│   ├── roadmap/               milestones M0–M11, scope, non-goals
+│   ├── roadmap/               charter (why, scope, non-goals), completion plan, milestone plans
 │   ├── adr/                   architecture decision records
 │   └── conventions/           the detailed rules (this file summarises them)
 ├── shale-core/                the engine. Depends on nothing but the JDK.
-├── shale-bench/               JMH + YCSB-style harnesses
-├── flotilla-raft/             consensus. Depends on shale-core.
-└── flotilla-server/           RPC, sharding, routing. Depends on both.
+└── shale-bench/               JMH microbenchmarks and workload harnesses
+
+Planned (ADR-0013) — created by the milestone named, not before:
+    shale-db/                  record layer, catalog, SQL, planner, executor, transactions (D1)
+    shale-server/              PostgreSQL wire-protocol server (D5)
+    shale-demo/                the CRUD demo application, a client of the server (D7)
 ```
 
 ### The dependency rule
 
 ```
-flotilla-server ──> flotilla-raft ──> shale-core
-                └────────────────────────┘
+shale-demo ──(PostgreSQL protocol)──> shale-server ──> shale-db ──> shale-core <── shale-bench
 ```
 
-`shale-core` **must never** depend on any `flotilla-*` module, or on any networking,
-RPC, or clustering code. It is an embeddable single-node engine and must remain
-usable, testable, and benchmarkable with zero cluster machinery present.
+`shale-core` **must never** depend on any module above it, or on any SQL, schema, networking or
+protocol code. It is an embeddable single-node engine and must remain usable, testable, and
+benchmarkable on its own. `shale-db` uses only `shale-core`'s public SPI, never `internal`.
+`shale-demo` reaches the database only over the wire protocol, as any application would.
 
-If you find yourself wanting to add a cluster concern to `shale-core`, stop and write
-an ADR instead. This boundary is the architectural point of the project.
+If you find yourself wanting to add a relational or network concern to `shale-core`, stop and
+write an ADR instead. This boundary is the architectural point of the project.
 
 ---
 
 ## 3. Commands
+
+A fresh machine or container has no JDK 25; the build uses a vendored one. Once per shell:
+
+```bash
+./scripts/bootstrap.sh       # fetch + checksum-verify JDK 25 into .tools/ (idempotent)
+source scripts/env.sh        # point JAVA_HOME and GRADLE_USER_HOME at .tools/
+```
+
+Then:
 
 ```bash
 ./gradlew build              # compile + checkstyle + unit tests
@@ -82,10 +98,11 @@ These are the rules most likely to be violated by well-meaning autocompletion.
 Anything in the roadmap's component inventory must be hand-written. Concretely, do not
 add: a skiplist or concurrent sorted map library, a bloom filter library (Guava's
 included), a serialisation framework for on-disk formats (Protobuf, Kryo, Avro), a
-compression codec *before* the format that uses it is hand-written and understood, a
-Raft implementation, a caching library, or a B-tree library.
+compression codec *before* the format that uses it is hand-written and understood, or a SQL
+parser, planner or query engine (Calcite, H2, JSqlParser).
 
-The permitted dependency allowlist lives in `documentation/conventions/java-style.md`.
+The permitted dependency allowlist lives in `documentation/conventions/java-style.md`; the only
+exceptions are the demo application and benchmark baselines (ADR-0013).
 Adding to it requires an ADR. When you need a data structure that already exists in
 the JDK and is *not* a project subject (e.g. `ArrayDeque`, `ReentrantLock`), use it
 freely — the rule targets the things we are here to learn, not general plumbing.
@@ -149,10 +166,12 @@ milestone in `documentation/roadmap/`.
 per-milestone checklist — are `documentation/conventions/documentation.md`. This is a study
 project; the explanation is part of the deliverable, not an afterthought.
 
-**Stay inside the milestone.** The roadmap is strictly ordered and each milestone must
+**Stay inside the milestone.** The end-to-end order of every remaining milestone is
+`documentation/roadmap/completion-plan.md`; start from the first milestone not marked done
+there, and follow its plan file. The roadmap is strictly ordered and each milestone must
 end in a working, tested artifact. Do not implement compaction while the SSTable format
 is unfinished, do not add bloom filters before compaction works, do not stub the
-distributed layer into the engine. If a task seems to require a later milestone's work,
+relational layer into the engine. If a task seems to require a later milestone's work,
 say so rather than building a placeholder.
 
 **Prefer the obvious implementation first.** Correctness, then measurement, then
@@ -196,6 +215,7 @@ wrong guess in these areas is expensive to unwind. Propose an ADR and stop.
 | Documentation, readability, diagrams | `documentation/conventions/documentation.md` |
 | Decision records | `documentation/adr/README.md` |
 | Milestones and scope | `documentation/roadmap/` |
+| The end-to-end plan: order, estimates, cut lines, status | `documentation/roadmap/completion-plan.md` |
 
 Lost? [`documentation/README.md`](documentation/README.md) is the map of every doc and the
 order to read them in.

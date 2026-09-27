@@ -24,19 +24,27 @@ if anything is on it. It is wired into `check`, so `./gradlew build` enforces it
 `junit-jupiter`, `assertj-core`, `jqwik` (property-based testing), `jmh-core` and
 `jmh-generator-annprocess` (in `shale-bench`).
 
-**Permitted, `flotilla-*` runtime:** exactly one RPC stack (gRPC + protobuf, or Netty
-if hand-rolling the protocol — decided in an ADR, not ad hoc), plus SLF4J as a logging
-*facade* with a binding chosen only at the server entry point.
+**`shale-db` and `shale-server` runtime dependencies: none** (ADR-0013). Each applies the
+same `verifyNoRuntimeDependencies` check as `shale-core`. SQL parsing, planning, execution,
+concurrency control, cost accounting and the PostgreSQL wire protocol are hand-written; admitting
+a library to any of them needs an ADR. Logging, where it exists, is the JDK's `System.Logger`.
+
+**The two deliberate exceptions (ADR-0013):**
+- **`shale-demo`** is an ordinary application, and uses what one would: the PostgreSQL JDBC
+  driver (proving a standard driver works is its purpose) and the JDK's `com.sun.net.httpserver`
+  for its web UI. That needs a Checkstyle suppression scoped to this module.
+- **`shale-bench`** may use RocksDB (JNI) and SQLite (JDBC) as *reference baselines only*, with
+  a Checkstyle suppression for `org.rocksdb` scoped to this module. No production module may
+  depend on `shale-bench`.
 
 **Explicitly banned everywhere:**
 
 | Banned | Because |
 |---|---|
-| Guava | Contains a bloom filter, a cache, and `Ordering` — three project subjects |
-| Caffeine, Ehcache | The block cache is a project subject |
-| Protobuf/Kryo/Avro **for on-disk formats** | The SSTable and WAL encodings are the exercise (protobuf for *RPC* is fine) |
-| Any Raft library (jraft, Atomix, Ratis, Copycat) | Consensus is a project subject |
-| Any embedded KV store (RocksDB JNI, MapDB, Xodus, LMDB bindings) | That is the whole project |
+| Guava | Contains a bloom filter and `Ordering` — project subjects |
+| Protobuf/Kryo/Avro **for on-disk formats** | The SSTable and WAL encodings are the exercise |
+| Any embedded KV store (RocksDB JNI, MapDB, Xodus, LMDB bindings) | That is the whole project — outside `shale-bench`'s reference baselines |
+| Any SQL parser, planner or query engine (Calcite, H2, JSqlParser, jOOQ's parser) | The relational layer is a project subject |
 | Lombok | Hides the constructors, equals, and field mutability that this codebase is specifically about making visible |
 | Spring, Guice, any DI container | Wiring is done by hand in a composition root; the object graph should be readable |
 | `sun.misc.Unsafe` | Use the Foreign Function & Memory API (`Arena`, `MemorySegment`) |
@@ -56,13 +64,13 @@ Target **JDK 25**. Use the modern language where it reduces ceremony, not for no
   which is exactly what the on-disk-descriptor types need. Validate in the compact
   constructor.
 - `sealed interface` + records for closed hierarchies: value types
-  (`Put`/`Delete`/`RangeDelete`), compaction outcomes, Raft messages. Then `switch`
+  (`Put`/`Delete`), compaction outcomes, SQL AST nodes, wire-protocol messages. Then `switch`
   patterns are exhaustive and the compiler catches the missing case when you add one.
 - Pattern-matching `switch` over visitor patterns and `instanceof` chains.
 - `Arena` / `MemorySegment` for all off-heap memory and memory-mapped files. Never
   `MappedByteBuffer` for new code — the 2 GiB `int`-indexing limit and the
   non-deterministic unmapping are exactly the problems `MemorySegment` fixes.
-- Virtual threads for the RPC/connection layer in `flotilla-server`.
+- Virtual threads for connection handling in `shale-server`, one per client session.
 
 **Do not use:**
 - Virtual threads for compaction, flush, or any CPU-bound background work. Those want

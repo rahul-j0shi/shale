@@ -1,8 +1,8 @@
 # M0 as-built — `shale-core` type graph and model harness
 
 The detail behind the built (green) boxes in the
-[README overview](../../README.md#architecture--the-complete-project-scope). Everything here
-is in the code at tag `m0-skeleton`; see the [M0 release note](../roadmap/m0-release-note.md).
+[README overview](../../README.md#architecture). Everything here
+is in the code at tag `m0-skeleton`; see the [changelog entry](../../CHANGELOG.md#m0--skeleton-and-interfaces--m0-skeleton).
 
 M0's one sentence: **the engine's contracts are locked and provable before any storage
 mechanism exists** — the `StorageBackend` SPI, the internal-key encoding, little-endian
@@ -25,7 +25,7 @@ M0 writes no storage and gives the engine its two permanent assets:
 
 Where it sits: M1 mounts durability behind `StorageBackend` and reuses `InternalKey`/`ValueType`
 unchanged; the same backend-vs-oracle harness carries on through flush (M3), compaction (M6),
-and snapshots (M7); and Flotilla will front the same seam with a replicated log. The encoding
+and snapshots (M7); and ShaleDB's record layer (D1) maps tables and indexes onto the same seam. The encoding
 decided here is the byte language every on-disk format in `wal/` and `sstable/` speaks.
 
 ---
@@ -37,8 +37,8 @@ and the rules every later mechanism is written against. Three package groups hol
 
 - **`dev.shale` — the public API.** The `StorageBackend` SPI (byte-key/byte-value `get`/`put`/
   `delete`/`scan`), `Durability` (`NONE`/`SYNC`/`GROUP`), `Cursor`, `ByteRange`, `KeyComparator`
-  (+ `BytewiseComparator`), and the `ShaleException` hierarchy. Every backend from M1 on —
-  in-memory, flush-based, B+Tree, replicated — ships behind this surface.
+  (+ `BytewiseComparator`), and the `ShaleException` hierarchy. Every engine stage from M1 on —
+  in-memory, flush-based, compacting — ships behind this surface.
 - **`dev.shale.internal.key` — the single key type.** `InternalKey` (`userKey ‖ fixed64LE((seq <<
   8) | type)`), `ValueType`, and `InternalKeyComparator`, ordered user-key ascending then trailer
   descending so the newest version sorts first. This is the type the memtable, WAL, and SSTable

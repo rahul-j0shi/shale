@@ -3,19 +3,18 @@
 - **Status:** Accepted
 - **Date:** 2026-07-21
 - **Milestone:** M0
-- **Reversible:** no — this is the seam every backend and every caller implements against; widening or reshaping it later ripples through the engine, the benchmark harness, and (eventually) the Flotilla state machine.
+- **Reversible:** no — this is the seam every backend and every caller implements against; widening or reshaping it later ripples through the engine, the benchmark harness, and the ShaleDB record layer that runs on it.
 
 ## Context
 
-The roadmap's centerpiece comparison (M8) runs the same benchmark harness against two
-storage engines — the LSM tree and a copy-on-write B+Tree — to *measure* the RUM tradeoff
-rather than assert it. That is only possible if both sit behind one interface fixed early
-(roadmap §D marks this interface hard-to-change). The same interface is what the model test
-harness drives from M0 onward, and what the Flotilla Raft state machine will call at M9. So
-the shape of the single-node storage contract must be decided now, before any engine exists.
+Three callers need one storage contract fixed early: the differential model harness, which
+drives it from M0 onward; the benchmark harness, which *measures* the engine's tradeoffs rather
+than asserting them; and the relational layer (ShaleDB, ADR-0013), which maps tables and indexes
+onto it. The charter marks this interface hard-to-change, so the shape of the single-node storage
+contract must be decided now, before any engine exists.
 
-The constraint is to keep the contract minimal and honest: byte keys and values only (no
-query layer — a non-goal), an explicit durability guarantee on every acknowledging write
+The constraint is to keep the contract minimal and honest: byte keys and values only (the query
+layer sits above the SPI, never inside it), an explicit durability guarantee on every acknowledging write
 (N3), and ordering defined entirely by a pluggable, named comparator.
 
 ## Options considered
@@ -60,9 +59,9 @@ close()                                           // AutoCloseable
 
 ## Rationale
 
-A small, byte-oriented contract is exactly what a benchmark needs to compare two engines
-fairly, and it keeps the engine embeddable and the module boundary honest
-([[0003-single-repo-four-modules]]). Deferring snapshots/batches to M7 follows the roadmap's
+A small, byte-oriented contract is exactly what a benchmark needs to measure the engine in
+isolation, and it keeps the engine embeddable and the module boundary honest
+([[0013-shaledb-see-through-database]]). Deferring snapshots/batches to M7 follows the roadmap's
 "stay inside the milestone" rule: we do not encode decisions we have not had to make. The
 `null`-return `get` is a deliberate, documented exception to the no-`null` rule because
 boxing an `Optional` per lookup is a measurable cost on the one path where "absent" is a
@@ -70,7 +69,7 @@ normal answer.
 
 ## Consequences
 
-**Positive:** one seam for LSM and B+Tree (M8) and for the Raft state machine (M9); a
+**Positive:** one seam for the model harness, the benchmarks and the relational layer; a
 harness-drivable contract from M0; durability is impossible to leave unstated.
 
 **Negative:** the SPI will need additive evolution for snapshots, write batches, and prefix
@@ -87,7 +86,7 @@ plus a coordinated migration. That blast radius is why it is fixed at M0.
 
 ## References
 
-- `documentation/roadmap/shale-roadmap.md` §D, §E — the StorageBackend comparison seam
+- `documentation/roadmap/charter.md` — the milestone order this interface serves
 - `documentation/conventions/java-style.md` §6 — the single permitted `null` return
 - `documentation/conventions/concurrency-and-resources.md` §5 — durability (N3, D1)
-- [[0004-internal-key-encoding]], [[0003-single-repo-four-modules]]
+- [[0004-internal-key-encoding]], [[0013-shaledb-see-through-database]]
