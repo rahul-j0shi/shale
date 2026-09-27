@@ -258,8 +258,14 @@ Update the ADR index. **Done when:** merged.
    `package-info` threading section: three threads — callers, `shale-wal-writer`,
    `shale-background`.
 4. README status; the completion plan's status table.
-5. **Reconciliation pass for M6:** reconcile its plan with the names that shipped.
-6. Tag `m5.5-write-path`.
+5. `guides/embedding-shale.md`:
+   - `GROUP` described as what it now is: a shared fsync;
+   - the threading section's three threads;
+   - write stalls, and what a caller sees during one;
+   - the new `ShaleOptions` fields;
+   - the "flush blocks writers" limitation removed.
+6. **Reconciliation pass for M6:** reconcile its plan with the names that shipped.
+7. Tag `m5.5-write-path`.
 
 ## 5. Milestone acceptance gates
 

@@ -294,6 +294,12 @@ recorded in the changelog.
   level.
 - A changelog entry with the measured write amplification of both styles on the bounded workload;
   README status; the completion plan's status table.
+- `guides/embedding-shale.md`:
+  - `flush()`, `compactRange` and the compaction `ShaleOptions`;
+  - the new metrics;
+  - the limitations table loses "disk use only grows" and the first "reads slow down" row.
+
+  The FAQ's memory-and-disk answer gets the measured space amplification.
 - **Reconciliation pass for M7.**
 - Tag `m6-compaction`.
 
