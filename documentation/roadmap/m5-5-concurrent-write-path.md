@@ -18,11 +18,11 @@ add JMH benchmarks for: `fillseq` and `fillrandom` at `SYNC` and `NONE` with 1, 
 filesystem and configuration in the M5.5 changelog entry. Raw JMH output is not committed
 (`commits.md` §3). These numbers become the "before" in every `Benchmark:` trailer.
 
-## Decisions required in the ADR
+## Design (decided — ADR-0014 records it with the alternatives)
 
 ADR-0008 already chose leader/follower batching (B2). This ADR fixes the mechanics:
 
-1. **Writer queue.** Recommended: LevelDB's `DBImpl::Write`. Writers enqueue; the front writer
+1. **Writer queue.** LevelDB's `DBImpl::Write`. Writers enqueue; the front writer
    becomes leader, merges queued requests up to a byte cap (RocksDB uses 1 MiB), assigns their
    sequence numbers, appends one WAL write, releases the lock for `force()` and the memtable
    inserts, then wakes the followers.
@@ -67,15 +67,22 @@ parallel memtable writes.
 
 ## Task order (TDD; each task one commit, gate green)
 
-1. ADR, this plan, ADR index. Benchmark baseline (step 0) as a `build(bench)` + `test(bench)` pair.
+1. ADR-0014 and the ADR index. The benchmark baseline (step 0) as a `build(bench)` + `test(bench)` pair.
 2. Watermarks introduced with the existing single-lock path (a refactor, behaviour unchanged).
-3. Writer queue with leader election. Group commit is proven with a controlled cohort: N writers
-   are parked at a barrier through the M5 file-operation seam, released together, and the test
-   asserts one force for N acknowledged writes.
+3. Writer queue with leader election. Group commit is proven with a controlled cohort, with no
+   sleeps:
+   - Add `holdSyncs()` and `releaseSyncs()` to M5's `FaultInjectionEnv`: while syncs are held,
+     `sync()` blocks until `releaseSyncs()`.
+   - Writer 1 becomes leader and blocks in its sync.
+   - Writers 2..N enqueue behind it. The test knows they are all queued when `RecordingMetrics`
+     sees the `wal.queue.depth` gauge reach N−1, counting down a latch.
+   - `releaseSyncs()`. Assert exactly 2 syncs for N acknowledged writes: writer 1 alone, then
+     one group of N−1.
 4. Fail-stop: an injected force failure fails the whole group and every later call.
 5. Flush executor seam and the deterministic test executor; move flush off the write path.
 6. Bounded immutable queue and write stall; a stall test with the deterministic executor.
-7. Draining, idempotent `close()`; operations-after-close tests.
+7. Draining `close()`: stop admitting writes, run the flush queue empty, then close. Test it with
+   the deterministic executor. Idempotent close and rejection after close already shipped in M5.
 8. Extend the model harness to run flushes on the deterministic executor at seeded points;
    extend `ShaleConcurrencyTest` for 16 writers with mixed durability.
 9. Benchmarks after the change; numbers into the changelog entry with the baseline.

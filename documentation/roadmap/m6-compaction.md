@@ -9,10 +9,10 @@ count, space and point-lookup cost stay bounded under a continuous write load, a
 counts write, read and space amplification so the RUM tradeoff can be measured, not asserted.
 This is the milestone after which the project may call itself an LSM engine.
 
-## Decisions required in the ADR
+## Design (decided — ADR-0015 records it with the alternatives)
 
-1. **Strategy order.** The charter suggested size-tiered first as simpler. **Recommended:
-   leveled first**, because LevelDB's `version_set.cc` is the clearest reference, it is the
+1. **Strategy order.** The original charter suggested size-tiered first as simpler. **Leveled
+   first**, because LevelDB's `version_set.cc` is the clearest reference, it is the
    configuration ShaleDB will run on, and it keeps point lookups at one file per level. Size-tiered
    (Cassandra STCS) follows as the second, selectable policy, so M8 and D7 can measure the
    difference through the same workloads. The ADR states
@@ -39,8 +39,8 @@ This is the milestone after which the project may call itself an LSM engine.
 7. **Stalls.** Extend M5.5's stall with L0 slowdown and stop triggers (LevelDB: 8 and 12).
 8. **`ShaleOptions`.** `Shale.open(Path, ShaleOptions)` replaces the growing parameter list:
    write-buffer size, compaction style, level sizes, triggers. This is a public API change.
-9. **Manifest.** If ADR-0012 reserved per-file level and compaction pointers, there is no format
-   change. Otherwise this is a manifest version bump under N2.
+9. **Manifest.** No format change: M5's manifest already records each file's level and defines
+   tag 5, the compaction pointer.
 
 ## Scope
 
@@ -60,8 +60,10 @@ limiting.
 3. Compaction job: merge inputs, apply drop rules, cut outputs, install; tests with fixed inputs.
 4. Leveled picker and compaction pointers; score tests from constructed level sizes.
 5. Background scheduling on the M5.5 executor, L0 stalls, trivial move.
-6. Crash coverage: kill at every file operation of a compaction (output write, rename, manifest
-   append, input deletion); recovery yields a valid Version and no lost key.
+6. Crash coverage: extend M5's `ShaleCrashMatrixTest` with a compaction workload. Crash at every
+   `FaultInjectionEnv` operation of a compaction (output writes, rename, manifest append, input
+   deletion), then power loss, then reopen. Assert a valid Version, no lost key, and no
+   obsolete input left behind once the reopen's cleanup runs.
 7. Model harness: seeded forced compactions between operations and across restarts.
 8. Amplification counters: `bytes.user.written`, `bytes.flush.written`,
    `bytes.compaction.read/written`, tables probed per `get`, live versus logical bytes, and

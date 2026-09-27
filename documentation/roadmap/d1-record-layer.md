@@ -8,10 +8,10 @@ fast-track). **Depends on:** M7 (`WriteBatch`, `Snapshot`, `ReadOptions`), the p
 all its index entries commit in one `WriteBatch`; every read runs at one `Snapshot`. The
 artifact is an embedded Java API for typed tables. SQL arrives in D2.
 
-## Decisions required in the ADR ("Relational data layout")
+## Design (decided — ADR-0018, "Relational data layout", records it)
 
 1. **Order-preserving encoding.** Encoded values must compare bytewise exactly as the values
-   compare. Recommended, after the FoundationDB tuple layer:
+   compare. After the FoundationDB tuple layer:
    - a type tag byte (NULL sorts first);
    - BIGINT as 8-byte big-endian with the sign bit flipped;
    - DOUBLE as IEEE-754 bits: invert all bits if negative, else flip the sign bit; −0.0

@@ -9,7 +9,7 @@ shows its rows, time and storage cost; the statement shows the write-side cost i
 state is queryable in SQL through two system tables, so the demo's engine panel needs no side
 channel.
 
-## Decisions required in the ADR ("Per-statement cost accounting")
+## Design (decided — ADR-0022, "Per-statement cost accounting", records it)
 
 1. **Where the numbers come from.** Each operator owns an `OperationStats` (M7) and passes it in
    `ReadOptions` for every engine call it makes. The statement's write side comes from the

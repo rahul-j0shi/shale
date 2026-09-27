@@ -7,9 +7,9 @@
 using optimistic concurrency control over snapshots. Autocommit statements become one-statement
 transactions, and D1's single writer lock is retired for DML.
 
-## Decisions required in the ADR ("Concurrency control and isolation")
+## Design (decided — ADR-0020, "Concurrency control and isolation", records it)
 
-1. **Isolation level.** Recommended: serializable, by backward-validation OCC (Kung & Robinson).
+1. **Isolation level.** Serializable, by backward-validation OCC (Kung & Robinson).
    Snapshot isolation alone permits write skew. The ADR records why SI was rejected as the
    default: it would be simpler, but the project wants a guarantee a test can falsify.
 2. **Timestamps (the Badger oracle design).** The DB layer keeps its own logical commit counter.

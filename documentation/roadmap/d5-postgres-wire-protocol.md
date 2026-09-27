@@ -8,7 +8,7 @@ as the shell, and the standard PostgreSQL JDBC driver works for applications. Th
 protocol, client or shell to build. And the server survives `kill -9` without losing an
 acknowledged commit — proven by a test that kills a real process.
 
-## Decisions required in the ADR ("PostgreSQL wire protocol subset")
+## Design (decided — ADR-0021, "PostgreSQL wire protocol subset", records it)
 
 1. **Protocol version 3.0, a documented subset.** `protocol.md` lists every message implemented.
    Anything else gets a correct `ErrorResponse` (SQLSTATE `0A000`), never a dropped connection

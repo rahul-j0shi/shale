@@ -16,10 +16,9 @@ the hook D6's `EXPLAIN ANALYZE` is built on.
 
 ## Part 1 — batches, snapshots, per-operation statistics
 
-### Decisions required in the ADR (public API, `Reversible: no`)
+### Design (decided — ADR-0016 records it; public API, `Reversible: no`)
 
-1. **The SPI additions.** Recommended shape — one options record instead of an overload per
-   feature:
+1. **The SPI additions** — one options record instead of an overload per feature:
    ```java
    void write(WriteBatch batch, Durability durability);
    CompletableFuture<WriteResult> writeAsync(WriteBatch batch, Durability durability);
@@ -74,7 +73,7 @@ the hook D6's `EXPLAIN ANALYZE` is built on.
 
 ## Part 2 — bloom filters
 
-### Decisions required in the ADR (SSTable format v2)
+### Design (decided — ADR-0017 records it; SSTable format v2)
 
 1. **Granularity:** one whole-table filter per SSTable (RocksDB's "full filter"), stored as a
    filter block named in the metaindex, which v1 left empty for exactly this.

@@ -8,7 +8,7 @@ and `EXPLAIN` shows the chosen plan.
 Volcano executor, each small, cited and tested. Every statement is atomic: it reads at one
 snapshot and commits one `WriteBatch`.
 
-## Decisions required in the ADR ("SQL dialect and query processing")
+## Design (decided — ADR-0019, "SQL dialect and query processing", records it)
 
 1. **Grammar (frozen for D2).**
    - `CREATE TABLE`, with column types, `NOT NULL` and a required `PRIMARY KEY (…)`;

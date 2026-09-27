@@ -4,9 +4,11 @@
 M0–M4 complete, `./gradlew build crashTest` green on JDK 25 (161 tests). **Why and what:** the
 [charter](charter.md) and [ADR-0013](../adr/0013-shaledb-see-through-database.md).
 
-This page orders everything left to build. Each milestone has a plan file with its decisions
-(each with a recommended answer), task order and acceptance gates. Pick up the first milestone in
-§10 that is not ✅ and follow its plan.
+This page orders everything left to build. Each milestone has a plan file with its decided
+design, task order and acceptance gates. Pick up the first milestone in §10 that is not ✅ and
+follow its plan. **The next milestone's plan is always the detailed one** (§5 step 1): M5's
+plan names every type, file, step, branch and test; later plans are made that concrete by the
+detail pass at the end of the milestone before them.
 
 ## 1. What "finished" means
 
@@ -72,16 +74,16 @@ estimate of 3–6, so recalibrate after M5 (§10).
 | Id | Milestone | Plan | ADR | Format change (N2) | New module | Est. | Tag |
 |---|---|---|---|---|---|---|---|
 | M5 | Manifest + recovery | [plan](m5-manifest-and-recovery.md) | 0012 | manifest v1 | — | 3–4 | `m5-manifest` |
-| M5.5 | Concurrent write path | [plan](m5-5-concurrent-write-path.md) | yes | — | — | 2–3 | `m5.5-write-path` |
-| M6 | Compaction | [plan](m6-compaction.md) | yes | none if M5 reserved the fields | — | 4–6 | `m6-compaction` |
-| M7 | Batches, snapshots, bloom, statistics | [plan](m7-batches-snapshots-bloom.md) | 2 | WAL v2, SSTable v2 | — | 3–4 | `m7-mvcc-bloom` |
+| M5.5 | Concurrent write path | [plan](m5-5-concurrent-write-path.md) | 0014 | — | — | 2–3 | `m5.5-write-path` |
+| M6 | Compaction | [plan](m6-compaction.md) | 0015 | — (M5 defined levels and tag 5) | — | 4–6 | `m6-compaction` |
+| M7 | Batches, snapshots, bloom, statistics | [plan](m7-batches-snapshots-bloom.md) | 0016, 0017 | WAL v2, SSTable v2 | — | 3–4 | `m7-mvcc-bloom` |
 | M8 | Engine benchmarks | [plan](m8-benchmark-suite.md) | — | — | — | 2–3 | `shale-1.0` |
-| D1 | Record layer | [plan](d1-record-layer.md) | yes | key + row v1 | `shale-db` | 2–3 | `d1-record` |
-| D2 | SQL + single-table execution | [plan](d2-sql-and-execution.md) | yes | — | — | 3–4 | `d2-sql` |
+| D1 | Record layer | [plan](d1-record-layer.md) | 0018 | key + row v1 | `shale-db` | 2–3 | `d1-record` |
+| D2 | SQL + single-table execution | [plan](d2-sql-and-execution.md) | 0019 | — | — | 3–4 | `d2-sql` |
 | D3 | Joins, aggregates, ordering | [plan](d3-joins-aggregates-ordering.md) | — | — | — | 2–3 | `d3-query` |
-| D4 | Serializable transactions | [plan](d4-transactions.md) | yes | — | — | 2–3 | `d4-txn` |
-| D5 | PostgreSQL wire protocol | [plan](d5-postgres-wire-protocol.md) | yes | (conforms to PostgreSQL's) | `shale-server` | 2–3 | `d5-pgwire` |
-| D6 | Cost accounting | [plan](d6-cost-accounting.md) | yes | — | — | 2 | `d6-cost` |
+| D4 | Serializable transactions | [plan](d4-transactions.md) | 0020 | — | — | 2–3 | `d4-txn` |
+| D5 | PostgreSQL wire protocol | [plan](d5-postgres-wire-protocol.md) | 0021 | (conforms to PostgreSQL's) | `shale-server` | 2–3 | `d5-pgwire` |
+| D6 | Cost accounting | [plan](d6-cost-accounting.md) | 0022 | — | — | 2 | `d6-cost` |
 | D7 | Demo, findings, launch | [plan](d7-demo-and-launch.md) | — | — | `shale-demo` | 3–4 | **`v1.0`** |
 
 **Totals:** engine ≈ 14–20 weeks, database ≈ 16–22 → **v1.0 ≈ 30–42 focused weeks** on these
@@ -89,15 +91,20 @@ estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken
 
 ## 5. How to execute any milestone
 
-1. Toolchain, once per shell: `./scripts/bootstrap.sh && source scripts/env.sh`.
-2. Branch `mNN/<slug>` (engine) or `dNN/<slug>` (database) from an up-to-date `main`.
-3. Read the plan, the `package-info.java` and `format.md` of the packages it touches, and the ADRs
-   it cites.
-4. **Decision first:** write the ADR as `Proposed`, settle each decision in the plan (starting
-   from its recommendation), and mark it `Accepted` before any implementation commit.
+1. **Detail pass (done as the last task of the previous milestone).** Before a milestone starts,
+   its plan must name every new or changed type and file, split the work into branch-sized
+   steps, and give each step its commits, its named tests and a "done when". Use M5's plan as
+   the template. A plan written before the code it builds on exists cannot name those types;
+   this pass is where it catches up.
+2. Toolchain, once per shell: `./scripts/bootstrap.sh && source scripts/env.sh`.
+3. For each step, branch `mNN/<slug>` (engine) or `dNN/<slug>` (database) from an up-to-date
+   `main`. Read the plan, the `package-info.java` and `format.md` of the packages it touches, and
+   the ADRs it cites.
+4. **Decision first:** the milestone's first step writes its ADR, which records the plan's design
+   and the alternatives it rejected. It is `Accepted` before any implementation commit.
 5. **Format first:** for new bytes, `format.md`, then the golden fixture and the round-trip and
    bit-flip tests, then the encoder. Commit with `Format-Change:` and `Reversible: no`.
-6. Implement in the plan's task order: TDD, one logical change per commit, each commit green.
+6. Implement in the plan's step order: TDD, one logical change per commit, each commit green.
 7. Satisfy every acceptance gate with a test, not with prose.
 8. Docs: `package-info` and Javadoc with N9 citations, glossary rows, the as-built
    `architecture/<milestone>-*.md` with validated Mermaid, the README status, a changelog entry.
@@ -106,23 +113,23 @@ estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken
 
 If a task seems to need a later milestone's work, stop and say so (CLAUDE.md §5).
 
-## 6. Decisions still to make
+## 6. The decision records each milestone writes
 
-Each open decision, the milestone whose ADR makes it, and the recommended answer (the plan has
-the detail). ADR numbers are assigned when written; 0012 is reserved for M5.
+Every design below is decided in its milestone's plan; the ADR records it, with the alternatives
+it rejected, as that milestone's first step. The numbers are reserved now.
 
-| When | ADR subject | Recommended answer |
+| ADR | Milestone | Records |
 |---|---|---|
-| M5 | 0012 — manifest, Version lifecycle, recovery, failure and close | LevelDB tagged edits in WAL framing; one-time M4 migration; fail-stop writes; `LOCK` file |
-| M5.5 | Writer queue, watermarks, background flush, stalls | LevelDB writer queue, one group in flight, fail-stop on fsync error |
-| M6 | Strategy, level invariants, point-lookup order, `ShaleOptions` | leveled first, size-tiered second |
-| M7 (1) | `WriteBatch`, `writeAsync`, `Snapshot`, `ReadOptions`, `OperationStats`, WAL v2 | batch = one WAL record; order fixed at call; caller-owned statistics |
-| M7 (2) | Filter block and hash | whole-table filter, double hashing, 10 bits/key |
-| D1 | Key encoding, keyspaces, row format, catalog, index states | FoundationDB-tuple encoding; CockroachDB key layout; F1-style backfill |
-| D2 | Dialect, types, nulls, planner shape | frozen subset; strict types; rule-based; primary key required |
-| D4 | Isolation and concurrency control | serializable backward-validation OCC; commits enqueued in commit order |
-| D5 | Protocol subset, types, errors, threading | v3 simple + extended query; four types, text and binary; virtual threads |
-| D6 | What is counted, the output, system tables | `OperationStats` per operator; PostgreSQL-style `QUERY PLAN` rows |
+| 0012 | M5 | manifest format; open and flush order; `Version` ownership; failed state and close; the `Env` seam |
+| 0014 | M5.5 | LevelDB writer queue, one group in flight; watermarks; fail-stop on fsync error; background flush and stalls |
+| 0015 | M6 | leveled first, size-tiered second; level invariants; point-lookup order; `ShaleOptions` |
+| 0016 | M7 (1) | `WriteBatch`, `writeAsync`, `Snapshot`, `ReadOptions`, `OperationStats`; WAL v2 |
+| 0017 | M7 (2) | whole-table bloom filter, double hashing, 10 bits/key; SSTable v2 |
+| 0018 | D1 | order-preserving key encoding; keyspaces; row format; catalog; index states |
+| 0019 | D2 | the frozen SQL subset; strict types; three-valued logic; rule-based planner |
+| 0020 | D4 | serializable backward-validation OCC; commits enqueued in commit order |
+| 0021 | D5 | the PostgreSQL protocol subset; types; error codes; threading |
+| 0022 | D6 | per-operator statistics; `EXPLAIN ANALYZE` output; system tables |
 
 **Public API changes to `shale-core`** (each in its ADR, with a `Reversible:` trailer):
 - M5: closed-state and repeated-close semantics.
@@ -130,7 +137,7 @@ the detail). ADR numbers are assigned when written; 0012 is reserved for M5.
 - M7: `write`, `writeAsync`, `snapshot`, `ReadOptions`, `OperationStats`.
 
 **Test tiers come alive:**
-- M5: crash tests over a simulated filesystem;
+- M5: `FaultInjectionEnv` — a crash and simulated power loss at every file operation;
 - M6: soak;
 - D2: SQL logic tests and differential queries;
 - D4: serializability checks;
