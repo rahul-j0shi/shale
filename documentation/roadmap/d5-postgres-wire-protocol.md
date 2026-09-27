@@ -1,100 +1,249 @@
 # D5 — The PostgreSQL wire protocol: implementation plan
 
-**Status:** planned; starts after D4 is tagged. **Depends on:** D2–D4 (sessions, statements,
-transactions). **Creates:** `shale-server` (package `dev.shale.server`), zero runtime dependencies.
+**Status:** planned; starts after D4 is tagged. **Depends on:** D2–D4 (`Session`,
+`PreparedStatement`, `Result`, command tags, SQLSTATEs, transaction states, `expireIdle`).
+**Creates:** `shale-server` (package `dev.shale.server`), zero runtime dependencies. **ADR:** 0021.
+**Estimate:** 2–3 focused weeks, in 7 steps.
 
-**Goal:** ShaleDB becomes a database you connect to with tools that already exist. `psql` works
-as the shell, and the standard PostgreSQL JDBC driver works for applications. There is no custom
-protocol, client or shell to build. And the server survives `kill -9` without losing an
-acknowledged commit — proven by a test that kills a real process.
+**Goal.** ShaleDB becomes a database you connect to with tools that already exist: `psql` as the
+shell, and the standard PostgreSQL JDBC driver for applications. There is no custom protocol,
+client or shell. The server survives `kill -9` without losing an acknowledged commit, proven by
+a test that kills a real process.
 
-## Design (decided — ADR-0021, "PostgreSQL wire protocol subset", records it)
+---
 
-1. **Protocol version 3.0, a documented subset.** `protocol.md` lists every message implemented.
-   Anything else gets a correct `ErrorResponse` (SQLSTATE `0A000`), never a dropped connection
-   (`on-disk-formats.md` §6).
-   - **Startup:**
-     - `SSLRequest` and `GSSENCRequest` are answered `N`;
-     - `StartupMessage` gets `AuthenticationOk` (trust auth; the server binds `127.0.0.1` by
-       default);
-     - then `ParameterStatus`: `server_version`, `server_encoding`, `client_encoding` (UTF8),
-       `DateStyle` (ISO), `integer_datetimes`, `standard_conforming_strings`, `TimeZone`;
-     - then `BackendKeyData` and `ReadyForQuery`.
-   - **Simple query:** `Query` → `RowDescription` / `DataRow` / `CommandComplete` /
-     `EmptyQueryResponse` / `ErrorResponse`, then `ReadyForQuery`. Several statements per string.
-   - **Extended query** (pgjdbc's default):
-     - `Parse`, `Bind`, `Describe` (statement and portal), `Execute` (a row limit gives
-       `PortalSuspended`), `Close`, `Sync`, `Flush`;
-     - the matching `ParseComplete`, `BindComplete`, `ParameterDescription`, `NoData`,
-       `CloseComplete`;
-     - after an error, messages are discarded until `Sync`, as the protocol requires.
-   - **`Terminate`.** **`CancelRequest`:** matched by backend key; sets a flag that operators
-     check between rows.
-2. **Types.** BIGINT → `int8` (OID 20), DOUBLE → `float8` (701), TEXT → `text` (25), BOOLEAN →
-   `bool` (16). Text format everywhere. Binary format for these four, because pgjdbc switches to
-   binary for server-prepared statements. Parameters sent as `int2`/`int4` are widened to BIGINT;
-   an unspecified (OID 0) parameter takes its type from the binder.
-3. **Session state.** `ReadyForQuery` reports `I`, `T` or `E`. After an error inside `BEGIN`,
-   statements fail with `25P02` until `ROLLBACK`, as in PostgreSQL. `SET` and `SHOW` support a
-   small documented set. `synchronous_commit` maps to durability (`on` → `SYNC`, `off` → `NONE`),
-   so a PostgreSQL user's own knob controls the fsync.
-4. **Errors.** `ErrorResponse` carries severity, SQLSTATE, message and position:
-   | Condition | SQLSTATE |
-   |---|---|
-   | syntax error | `42601` |
-   | undefined table / undefined column | `42P01` / `42703` |
-   | unique violation / not-null violation | `23505` / `23502` |
-   | serialization failure (D4 conflict) | `40001` |
-   | in a failed transaction | `25P02` |
-   | feature not supported | `0A000` |
-   | query memory limit exceeded | `53200` |
-   | query cancelled | `57014` |
-   | `CorruptionException` (after which the server refuses writes, N4) | `XX001` |
-5. **Threading and limits.** One virtual thread per connection (`java-style.md` §2). Limits on
-   connections and message size. A statement timeout on the injected `Clock`. Every length field
-   is bounds-checked before its body is read.
-6. **Test-scope pgjdbc.** `shale-server`'s conformance tests use the real PostgreSQL JDBC driver,
-   test scope only; this milestone adds that to `java-style.md` §1. A CI job also runs a `psql`
-   script (from the distribution's `postgresql-client` package) against the server.
+## 1. Where the code will be at the start (after D4)
 
-## Scope
+`Session` executes SQL with `$n` parameters. `PreparedStatement` parses once and reports
+parameter types and result columns. `Result` is `RowResult` (streaming) or `CountResult`
+(PostgreSQL command tags). Every error has a SQLSTATE and a position. Session states are `IDLE`,
+`IN_TRANSACTION` and `FAILED`.
 
-**In D5:** the protocol codec and state machine (`dev.shale.server.pgwire`); sessions; the
-listener; graceful shutdown (stop accepting, finish in-flight statements, close the database);
-`installDist` launch scripts (`bin/shaledb`) and a `Dockerfile` on a JDK 25 base image.
+## 2. The design (decided — ADR-0021, "PostgreSQL wire protocol subset", records it)
 
-**Not planned:** SSL/TLS, password authentication, `COPY`, `LISTEN`/`NOTIFY`, the `pg_catalog`
-views that `psql`'s `\d` commands query (they return `0A000`).
+### 2.1 The protocol subset (version 3.0; `protocol.md` lists every message)
 
-## Task order (TDD; each task one commit, gate green)
+**Startup:**
+1. `SSLRequest` or `GSSENCRequest` → the byte `N` (pgjdbc's default `sslmode=prefer` then
+   continues in plaintext).
+2. `StartupMessage` (protocol 196608). Parameters are read and ignored, except `user`,
+   `database`, `application_name`, `client_encoding` (must be `UTF8`, else `08P01`).
+3. `AuthenticationOk` — trust authentication. The server binds `127.0.0.1` by default.
+4. `ParameterStatus` for:
+   - `server_version` = `16.0` — pgjdbc parses it to choose features, so it must look like a
+     PostgreSQL version;
+   - `server_encoding` and `client_encoding` = `UTF8`;
+   - `DateStyle` = `ISO, MDY`;
+   - `integer_datetimes` = `on`;
+   - `standard_conforming_strings` = `on`;
+   - `TimeZone` = `UTC`;
+   - `is_superuser` = `off`;
+   - `application_name`.
+5. `BackendKeyData` (process id, secret), then `ReadyForQuery`.
 
-1. ADR and `protocol.md` (message tables, one annotated byte-level exchange); the ADR index.
-2. Module skeleton, the shared dependency check, `package-info`s; CLAUDE.md §2 and
-   `project-scope.md` in the same commit.
-3. Message codec: every message round-trips; tests replay byte sequences from the protocol
-   documentation; bit-flip and truncation tests reject malformed lengths.
-4. Startup and simple-query flow; error mapping; transaction status.
-5. Extended-query flow; binary formats for the four types; portal row limits.
-6. `SET` / `SHOW`, `synchronous_commit`, cancel, statement timeout.
-7. Conformance tests over pgjdbc (autocommit, transactions, prepared statements, errors,
-   `40001` retry) and the CI `psql` script.
-8. **Process-level crash test** (tagged `crash`): start the server in a child JVM; commit rows
-   over JDBC under `synchronous_commit = on`, recording each acknowledgement; SIGKILL at a seeded
-   point; restart. Every acknowledged row is present, and `Database.verify()` is clean.
-9. Packaging: `installDist`, `Dockerfile`. Docs: `architecture/d5-postgres-wire-protocol.md`
-   (the connection state machine, a query's message flow), README status, changelog, tag
-   `d5-pgwire`.
+**Simple query:**
+- `Query` → for each statement: `RowDescription` + `DataRow`* + `CommandComplete`, or
+  `CommandComplete`, or `EmptyQueryResponse`.
+- Then one `ReadyForQuery`.
+- On error: `ErrorResponse`, skip the rest of the string, then `ReadyForQuery`.
+- **Several statements in one `Query`** run as one implicit transaction (unless they contain their
+  own `BEGIN`/`COMMIT`), exactly as PostgreSQL does.
 
-## Acceptance gates
+**Extended query:**
 
-- `psql` connects, runs DDL, DML, queries and transactions, and shows errors with positions.
-- pgjdbc passes the conformance suite, including prepared statements past its `prepareThreshold`
-  (binary transfer).
-- The process-level kill test passes 20 seeded runs in `crashTest`.
+| Message | Reply |
+|---|---|
+| `Parse` (named or unnamed statement, parameter type OIDs, 0 = unspecified) | `ParseComplete` |
+| `Bind` (portal, parameter format codes and values, result format codes) | `BindComplete` |
+| `Describe` S | `ParameterDescription` + `RowDescription` or `NoData` |
+| `Describe` P | `RowDescription` or `NoData` |
+| `Execute` (portal, row limit) | `DataRow`* + `CommandComplete`, or `PortalSuspended` at the limit |
+| `Close` S/P | `CloseComplete` |
+| `Sync` | `ReadyForQuery`; ends an implicit transaction |
+| `Flush` | send what is buffered |
+
+- After an error, every message is discarded until `Sync`.
+- A portal holds its open `RowResult` until it is closed or the transaction ends.
+
+**Other:**
+- `Terminate` closes the connection.
+- **`CancelRequest`,** on a new connection with the process id and secret, sets a flag the
+  session's operators check between rows → `57014`.
+- **`NoticeResponse`** carries warnings (for example `COMMIT` with no transaction, `25P01`) and
+  D6's cost notices.
+- `ErrorResponse` fields: `S`/`V` severity, `C` SQLSTATE, `M` message, `P` position.
+
+**Anything else** → `ErrorResponse` `0A000` naming the message type; the connection survives.
+**Not supported:** `COPY`, `FunctionCall`, replication, SASL or MD5 authentication.
+
+### 2.2 Types and formats
+
+| ShaleDB type | Result OID (text/binary) | Accepted parameter OIDs |
+|---|---|---|
+| BIGINT | `int8` 20 | 20, `int4` 23, `int2` 21 (widened) |
+| DOUBLE | `float8` 701 | 701, `float4` 700 (widened), 20/23/21 (converted) |
+| TEXT | `text` 25 | 25, `varchar` 1043 (pgjdbc's default for `setString`), 0 |
+| BOOLEAN | `bool` 16 | 16 |
+
+- **An unspecified parameter (OID 0)** takes the binder's type.
+- **Text format** everywhere by default:
+  - BIGINT is decimal;
+  - DOUBLE uses PostgreSQL's shortest round-trip form, with `Infinity`, `-Infinity`, `NaN`;
+  - BOOLEAN is `t`/`f`;
+  - NULL is length −1.
+- **Binary format** for parameters and results of every OID in the table:
+  - int2, int4 and int8 are big-endian;
+  - float4 and float8 are IEEE-754 big-endian;
+  - bool is one byte;
+  - text and varchar are raw UTF-8.
+
+  pgjdbc switches to binary after `prepareThreshold` (5) executions of a statement.
+- **Mismatches:** an unknown parameter OID → `42804`; a malformed value → `22P02`.
+
+### 2.3 Sessions, transactions, durability
+
+- **One `Session` per connection,** on its own virtual thread (`java-style.md` §2).
+- **`ReadyForQuery` status** comes from the session state: `I` idle, `T` in a transaction, `E`
+  failed.
+- **`SET` and `SHOW`:**
+  - `SET` accepts `application_name`, `client_encoding` (`UTF8` only), `extra_float_digits`
+    (accepted, ignored), `DateStyle` (accepted if `ISO`), `synchronous_commit`, and D6's
+    `shale.cost_notices`;
+  - `SHOW` returns their values;
+  - anything else → `0A000`.
+- **`synchronous_commit`** maps to durability: `on` → `SYNC`, `off` → `NONE`. So a PostgreSQL
+  user's own knob controls the fsync.
+- **Timers:** every second a scheduler thread calls `Database.expireIdle()`. The statement
+  timeout (`statement_timeout`, accepted by `SET`) is checked between rows on the injected
+  `Clock` → `57014`.
+
+### 2.4 Limits, safety, shutdown
+
+- **Limits:** a message length over 64 MiB → `08P01`, and the connection closes; more than
+  `maxConnections` (default 64) → `53300`. Every length field is bounds-checked before its body is
+  read.
+- **Binding:** `127.0.0.1` on port 5433 by default (5432 is left for a real PostgreSQL). There is
+  no authentication or TLS, which is a documented non-goal.
+- **Shutdown on SIGTERM or `close()`:**
+  1. stop accepting;
+  2. let in-flight statements finish, up to a grace period;
+  3. roll back open transactions;
+  4. close the database.
+
+### 2.5 Packaging
+
+- **`ShaleDbServer.main`:** `--dir`, `--port`, `--bind`.
+- **Distribution:** `installDist` produces `bin/shaledb`.
+- **Docker:** a `Dockerfile` on an Eclipse Temurin 25 JRE image, exposing 5433 with a volume for
+  the data directory.
+
+## 3. New types and files (`shale-server`)
+
+| Item | Package | Step |
+|---|---|---|
+| module build; `verifyNoRuntimeDependencies`; `verifyModuleGraph` edge `shale-server → shale-db`; `testImplementation` of pgjdbc | `shale-server/build.gradle.kts`, root | 2 |
+| `protocol.md` | `dev.shale.server.pgwire` | 1 |
+| `MessageReader`, `MessageWriter`, `FrontendMessage` (sealed records), `BackendMessage` (sealed records) | `dev.shale.server.pgwire` | 3 |
+| `TypeCodec` (the §2.2 conversions) | `dev.shale.server.pgwire` | 3 |
+| `Connection` (the per-connection state machine), `Portal`, `CancelRegistry` | `dev.shale.server` | 4, 5 |
+| `ShaleDbServer` (listener, virtual threads, timers, shutdown) | `dev.shale.server` | 4, 6 |
+
+## 4. Steps
+
+### Step 1 — ADR-0021 and `protocol.md` (`adr/0021-pgwire`), ~1 day
+`docs(pgwire)`: ADR-0021 records §2. Alternatives:
+- HTTP/JSON (rejected: a custom client and shell, with nothing standard able to connect);
+- a hand-rolled binary protocol (rejected: same);
+- per-statement autocommit inside a multi-statement `Query` (rejected: PostgreSQL makes it one
+  transaction, and clients rely on that).
+
+`protocol.md` holds every message's layout and one annotated byte-level exchange (startup, one
+`Parse`/`Bind`/`Execute`/`Sync`). **Done when:** merged.
+
+### Step 2 — the module (`d05/module`), ~½ day
+`build(build)`: the module, checks and graph edge; pgjdbc pinned in `libs.versions.toml`, test
+scope only; `java-style.md` §1 updated; CLAUDE.md §2 and `project-scope.md`. **Done when:** green.
+
+### Step 3 — the codec (`d05/codec`), ~3 days
+`feat(pgwire)`: `MessageReader`, `MessageWriter`, the message records, `TypeCodec`. Tests:
+- `MessageCodecTest`: every message round-trips; the byte sequences from `protocol.md`'s example
+  decode exactly.
+- A length overrunning the stream → `08P01`; a truncated message waits for more bytes (it is not
+  corruption).
+- `TypeCodecPropertyTest`: text and binary round-trips for every OID in §2.2, including NaN,
+  ±Infinity, `Long.MIN_VALUE`, empty and non-ASCII text.
+
+**Done when:** green.
+
+### Step 4 — startup and simple query (`d05/simple-query`), ~3 days
+`feat(api)`: `Connection` startup, `Query` handling, implicit transactions, error and notice
+mapping, `ReadyForQuery` status; the `ShaleDbServer` listener. Tests (`SimpleQueryTest`, over a
+raw socket in-process):
+- startup sequence bytes;
+- a multi-statement query;
+- an error mid-string skips the rest;
+- `BEGIN` / error / `SELECT` → `25P02` → `ROLLBACK`;
+- `EmptyQueryResponse`.
+
+**Done when:** green.
+
+### Step 5 — extended query, cancel, `SET`/`SHOW` (`d05/extended-query`), ~4 days
+`feat(api)`: `Parse`/`Bind`/`Describe`/`Execute`/`Close`/`Sync`/`Flush`, `Portal` with row
+limits, binary formats, `CancelRegistry`, `SET`/`SHOW`, `synchronous_commit`,
+`statement_timeout`. The D2 parser gains `SET name { TO | = } value` and `SHOW name`, which the
+`Session` executes against its settings. Tests:
+- `ExtendedQueryTest`: error-until-`Sync`; a suspended portal resumes; `Describe` before `Bind`.
+- `PgJdbcConformanceTest`, through the real driver:
+  - autocommit and explicit transactions;
+  - `setLong`/`setInt`/`setString`/`setDouble`/`setBoolean`/`setNull`;
+  - a prepared statement executed 10 times (so it crosses into binary);
+  - `fetchSize` paging;
+  - `40001` surfacing as `SQLException.getSQLState()`;
+  - `synchronous_commit = off`;
+  - cancel.
+
+**Done when:** green.
+
+### Step 6 — the real-process crash test and shutdown (`d05/kill-test`), ~2 days
+1. `feat(api)`: graceful shutdown, `maxConnections`, the timers.
+2. `test(recovery)`: `ServerKillTest` (tag `crash`).
+   - **Setup:** start `ShaleDbServer` in a child JVM (`ProcessBuilder` on the test classpath).
+   - **Load:** over JDBC with `synchronous_commit = on`, insert rows, recording each acknowledged
+     id.
+   - **Kill:** `destroyForcibly()` (SIGKILL) after a seeded number of acknowledgements; restart
+     the server on the same directory.
+   - **Assert:** every acknowledged id is present, no unacknowledged id is half-written (each row
+     whole or absent), and `verify()` is clean.
+   - Runs 20 seeds.
+3. `build(ci)`: a CI step installs `postgresql-client` if missing and runs `scripts/psql-smoke.sql`
+   through `psql` against a started server: DDL, DML, a transaction, an error with position.
+
+**Done when:** `ServerKillTest` passes 20 of 20 in `crashTest`; the CI `psql` step is green.
+
+### Step 7 — packaging, documentation, tag (`d05/docs`), ~2 days
+- `installDist`, `Dockerfile`, `scripts/shaledb.sh`.
+- `architecture/d5-postgres-wire-protocol.md`: the connection state machine, a `Parse`–`Sync`
+  message flow, threading.
+- Glossary rows (portal, prepared statement, `ReadyForQuery` status).
+- README quickstart: `bin/shaledb --dir data` then `psql -h 127.0.0.1 -p 5433`.
+- Changelog; the completion plan's status table.
+- **Reconciliation pass for D6.** Tag `d5-pgwire`.
+
+## 5. Milestone acceptance gates
+
+- `psql` runs DDL, DML, queries and transactions, and shows errors with positions (CI).
+- pgjdbc passes the conformance suite, including binary transfer after `prepareThreshold`.
+- `ServerKillTest`: no acknowledged commit lost across 20 seeded SIGKILLs.
+- Malformed input never crashes the server or corrupts data (codec tests).
 - `shale-server`'s runtime dependency graph is empty.
+
+## 6. Not in D5
+
+TLS, password authentication, `COPY`, `LISTEN`/`NOTIFY`, the `pg_catalog` views that `psql`'s
+`\d` commands query (they return `0A000`), a connection pooler.
 
 ## References
 
-PostgreSQL documentation, "Frontend/Backend Protocol" (chapter 55: message flow and formats) and
-Appendix A (error codes); the pgjdbc source (`QueryExecutorImpl`) for what a real driver sends;
-JEP 444 (virtual threads).
+PostgreSQL documentation, chapter 55 "Frontend/Backend Protocol" (message flow and formats) and
+Appendix A (error codes); the pgjdbc source (`QueryExecutorImpl`, `PgPreparedStatement`) for what
+a real driver sends; JEP 444 (virtual threads).
