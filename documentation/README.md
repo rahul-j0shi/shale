@@ -5,7 +5,8 @@ of document is for and the order to read them in. The standard these docs are he
 just record — is [`conventions/documentation.md`](conventions/documentation.md).
 
 If you read nothing else, read the [top-level README](../README.md) for the mission and current
-status, then come back here.
+status, then come back here. **If you want to use the engine rather than study it**, go straight
+to [Embedding Shale](guides/embedding-shale.md); for questions, the [FAQ](faq.md).
 
 ---
 
@@ -30,6 +31,9 @@ status, then come back here.
 | Area | What it answers | Index |
 |---|---|---|
 | **Roadmap** | *Why, what, and in what order?* The charter, the completion plan, a plan per remaining milestone. | [charter](roadmap/charter.md) · [completion plan](roadmap/completion-plan.md) |
+| **Guides** | *How do I use it?* Setup, API, durability, operation and limitations, for users rather than readers of the code. | [embedding Shale](guides/embedding-shale.md) · planned: operating Shale (M8), the ShaleDB quickstart (D5) and SQL reference (D2) |
+| **FAQ** | *What would a user or an interviewer ask?* Short answers that link to the detail. | [faq.md](faq.md) |
+| **Bug log** | *What went wrong, and how was it caught?* | [bug-log.md](bug-log.md) |
 | **Changelog** | *What has shipped?* One entry per finished milestone. | [CHANGELOG.md](../CHANGELOG.md) |
 | **ADRs** | *Why is it built this way?* One record per expensive, hard-to-reverse decision. | [adr/README.md](adr/README.md) |
 | **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
