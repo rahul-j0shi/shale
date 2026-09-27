@@ -1,112 +1,308 @@
-# M7 — Atomic batches, snapshots, bloom filters, per-operation statistics: implementation plan
+# M7 — Atomic batches, snapshots, per-operation statistics, bloom filters: implementation plan
 
-**Status:** planned; starts after M6 is tagged. Two parts, each on its own branch with its own ADR:
-**part 1** — batches, snapshots and per-operation statistics (the SPI change ShaleDB is built on);
-**part 2** — bloom filters. Tag `m7-mvcc-bloom` after both.
+**Status:** planned; starts after M6 is tagged. **Depends on:**
+- M5.5: the write queue and writer thread, `visibleSequence`, `WriteResult`;
+- M6: `CompactionJob`'s `smallestSnapshot` parameter, the lookup order;
+- M4: `ReconcilingCursor`.
 
-**Depends on:** M6 (compaction learns the snapshot-aware drop rule), M5.5 (the visible sequence
-watermark and the writer queue), M4 (`ReconcilingCursor` gains its fourth rule).
+**ADRs:** 0016 (part 1), 0017 (part 2). **Estimate:** 3–4 focused weeks, in 8 steps. **Tag:**
+`m7-mvcc-bloom`.
 
-**Goal:** the three guarantees and one capability a database layer needs from its engine. A group
-of writes commits all-or-nothing. A reader sees one consistent state for as long as it needs. A
-lookup skips tables that cannot hold its key. And every read and write can report what it cost —
-the hook D6's `EXPLAIN ANALYZE` is built on.
+**Goal.** The three guarantees and one capability ShaleDB needs from its engine:
+- a group of writes commits all-or-nothing;
+- a reader sees one consistent state for as long as it needs;
+- a point lookup skips tables that cannot hold its key;
+- every read and write can report what it cost — the hook D6's `EXPLAIN ANALYZE` is built on.
 
 ---
 
-## Part 1 — batches, snapshots, per-operation statistics
+## 1. Where the code will be at the start (after M6)
 
-### Design (decided — ADR-0016 records it; public API, `Reversible: no`)
+| Fact | Where |
+|---|---|
+| A write is one mutation; `WriteQueue` groups requests and returns a package-private `WriteResult` | M5.5 |
+| The WAL payload is one mutation; segment header `FORMAT_VERSION` 1 | `wal/format.md`, `WalRecordCodec` |
+| `get` seeks `(userKey, MAX_SEQUENCE)`; `ReconcilingCursor` seeks `(from, MAX_SEQUENCE)` and takes the newest version of every key | `Shale.java:291`, `ReconcilingCursor.java:90` |
+| Readers see every memtable entry as soon as the writer thread inserts it; `visibleSequence` is maintained but unused | M5.5 §2.2 |
+| `CompactionJob` drops by `smallestSnapshot`, which is `visibleSequence` | M6 §2.5 |
+| The SSTable metaindex block is empty; footer `FORMAT_VERSION` 1 | `sstable/format.md` |
+| `StorageBackend` has `put`, `delete`, `get`, `scan`; the test `ReferenceBackend` implements it | ADR-0006 |
 
-1. **The SPI additions** — one options record instead of an overload per feature:
-   ```java
-   void write(WriteBatch batch, Durability durability);
-   CompletableFuture<WriteResult> writeAsync(WriteBatch batch, Durability durability);
-   Snapshot snapshot();                                   // AutoCloseable
-   byte[] get(byte[] userKey, ReadOptions options);
-   Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
-   record ReadOptions(Snapshot snapshot, OperationStats stats) { }  // either may be null
-   ```
-   `put` and `delete` become one-entry batches internally.
-2. **`writeAsync` ordering.** The call enqueues synchronously, so a batch's sequence numbers are
-   fixed by call order. The future completes once the batch is durable under its `Durability` and
-   visible. This is what lets ShaleDB (D4) commit transactions in its own commit order while still
-   sharing a group-commit fsync. `WriteResult` carries the first sequence number, the WAL bytes,
-   the group size and whether the group forced.
-3. **WAL format v2.** The version lives in each segment's header (`wal/format.md` §1), so a v2
-   segment's every logical record is a batch: base sequence (fixed64), count (fixed32), then typed
-   entries (LevelDB's `WriteBatch` rep). v1 segments still replay as single mutations. The work:
-   - `format.md` updated;
-   - the v1 golden file still recovers, and a new v2 golden is added;
-   - `Format-Change:` trailer.
+## 2. Part 1 — design (decided — ADR-0016; public API, `Reversible: no`)
 
-   A torn batch is never partly replayed; the CRC covers the whole logical record.
-4. **Visibility.** Each batch takes consecutive sequence numbers. The visible watermark advances
-   past a batch only when all of it is in the memtable. A read without a snapshot reads at the
-   current watermark, so nobody sees half a batch.
-5. **Reads at a snapshot.** `get` seeks with the snapshot's sequence instead of `MAX_SEQUENCE`;
-   `ReconcilingCursor` skips entries above it (its fourth rule).
-6. **Retention.** The engine tracks live snapshots, and compaction keeps what the smallest one
-   needs (LevelDB's `smallest_snapshot`). An open snapshot pins old versions; that pinning is
-   reported as `snapshot.oldest.age`.
-7. **`OperationStats`.** A caller-owned, `@NotThreadSafe` accumulator — RocksDB's `PerfContext`,
-   but passed explicitly rather than thread-local. It counts:
-   - memtables probed and SSTables probed;
-   - filter skips (from part 2);
-   - blocks read and bytes read;
-   - entries visited, shadowed versions skipped and tombstones skipped.
+### 2.1 The API
 
-   A cursor keeps reporting into it as it advances. With `null`, the path pays one branch per
-   event, and a JMH benchmark proves that before the design is accepted.
+```java
+// dev.shale — all new public types
+public final class WriteBatch {                 // @NotThreadSafe; owned by its builder thread
+  public WriteBatch put(byte[] userKey, byte[] value);
+  public WriteBatch delete(byte[] userKey);
+  public int count();
+  public long approximateSizeBytes();
+  public void clear();
+}
+public record WriteResult(long firstSequence, long lastSequence, long walBytes,
+                          int groupSize, boolean synced) { }
+public final class Snapshot implements AutoCloseable {   // @ThreadSafe
+  public long sequence();
+  public void close();                                   // idempotent
+}
+public record ReadOptions(Snapshot snapshot, OperationStats stats) {   // either may be null
+  public static final ReadOptions DEFAULT = new ReadOptions(null, null);
+  public static ReadOptions at(Snapshot snapshot);
+  public ReadOptions withStats(OperationStats stats);
+}
+public final class OperationStats { /* §2.5 */ }         // @NotThreadSafe; caller-owned
 
-### Gates
+// StorageBackend gains (ADR-0006's "additive evolution"):
+void write(WriteBatch batch, Durability durability);
+CompletableFuture<WriteResult> writeAsync(WriteBatch batch, Durability durability);
+Snapshot snapshot();
+byte[] get(byte[] userKey, ReadOptions options);
+Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
+```
 
-- A batch of N entries is wholly visible or wholly absent: at every crash offset of its WAL
-  record, and to concurrent readers during its insertion (a controlled interleaving test).
-- `writeAsync` calls made in order A, B get sequences A < B, even when they share one group.
-- A snapshot taken before N writes sees exactly the pre-N state after those writes, after a flush
-  and after a compaction. Closing it lets compaction reclaim the shadowed versions.
-- `OperationStats` for scripted reads equals hand-computed counts. Example: a key living in L2
-  under two memtables and three L0 tables reports 2 memtables probed, then the tables probed and
-  blocks read along the documented lookup order.
-- Model harness: batches and snapshot reads join the operation mix.
+- **`WriteBatch` ownership.** `write` and `writeAsync` encode the batch *during the call*, so the
+  caller may `clear()` and reuse it as soon as the call returns. An empty batch is legal: it
+  returns without touching the WAL.
+- **Limits.** A batch over 32 MiB is `IllegalArgumentException`. With the queue bound at 64 MiB
+  (M5.5), a lone maximum batch is always admitted. The queue admits a request while queued bytes
+  are *at or below* the bound, even if it pushes over.
+- **Old methods.** `put`, `delete`, `get(byte[])` and `scan(from, to)` stay. They become a
+  one-entry batch and `ReadOptions.DEFAULT` respectively.
+- **The test backend.** `ReferenceBackend` implements the new methods: batches applied atomically
+  to its `TreeMap`; snapshots as copies.
 
-## Part 2 — bloom filters
+### 2.2 `writeAsync` — ordering and completion
 
-### Design (decided — ADR-0017 records it; SSTable format v2)
+- **Order is fixed at the call.** `writeAsync` encodes the batch and calls `WriteQueue.submit`
+  before returning. So two calls made in order A, B from one thread, or under one lock, get
+  sequences A < B, even if they end up in one group.
+- **It never does I/O in the caller's thread.** M5.5's queue guarantees that. It blocks only on
+  the queue's byte bound.
+- **The future completes** after the batch is durable under its `Durability` *and* visible (group
+  steps 6–8 of M5.5 §2.1). It completes exceptionally with `EngineStateException` on failure.
+- **`write`** is `writeAsync(...).join()`, unwrapping the exception.
 
-1. **Granularity:** one whole-table filter per SSTable (RocksDB's "full filter"), stored as a
-   filter block named in the metaindex, which v1 left empty for exactly this.
-2. **Hash and probes:** a hand-written 32-bit hash (LevelDB's `Hash`) with double hashing
-   (Kirsch–Mitzenmacher) to derive k probes, where k = bits-per-key × ln 2, stored in the block.
-3. **Sizing:** bits per key is a `ShaleOptions` field (default 10, about 1% false positives);
-   0 disables filters.
-4. **Compatibility:** v1 tables have no filter and are always probed. The work: `format.md`
-   updated, the v1 golden still readable, a v2 golden, `Format-Change:`.
+### 2.3 WAL format version 2
 
-### Gates
+- **Where the version lives.** The version is in each segment's header (`wal/format.md` §1). A
+  segment written by M7 has `FORMAT_VERSION` 2, and **every logical record in it is one batch**:
 
-- **Never a false negative:** property test, including exhaustive small sets.
-- Measured false-positive rate within 15% of theory at 5, 10 and 15 bits per key.
-- A missing-key lookup (`readmissing`) improves measurably with filters on — the operation behind
-  every SQL `INSERT`'s duplicate-key check.
-- `OperationStats` counts each skip.
+  | Field | Encoding |
+  |---|---|
+  | base sequence | fixed64LE |
+  | entry count | fixed32LE |
+  | each entry | type (1 byte: 1 = put, 0 = delete — `ValueType`'s codes), varint32 key length, key, and for a put: varint32 value length, value |
 
-## Task order (per part: ADR → format → code → gates → docs)
+  Entry *i* has sequence base + *i*.
+- **Old segments still work.** Replay dispatches on the segment's header version: v1 segments
+  replay as one mutation per record, as today.
+- **Torn and corrupt records.** A batch is one logical record, and the CRC covers every fragment,
+  so a torn batch is dropped whole (`TRUNCATE_TAIL`). A count or length that overruns the record
+  is `CorruptionException`.
 
-1. **Part 1:**
-   - ADR; WAL v2 `format.md` and goldens;
-   - `WriteBatch` and its codec;
-   - `writeAsync` on the M5.5 queue; visible-watermark reads; the snapshot registry;
-   - the cursor's fourth rule; compaction's `smallestSnapshot`;
-   - `OperationStats` threaded through `get`, the SSTable iterator and the cursor; model harness.
-2. **Part 2:** ADR; SSTable v2 `format.md` and goldens; `dev.shale.filter.BloomFilter` and its
-   builder; writer and reader integration; the skip in the `get` path; FPR measurement.
-3. **Docs:** `package-info`s, glossary rows, `architecture/m7-batches-snapshots-bloom.md`,
-   README status, changelog; tag `m7-mvcc-bloom`.
+### 2.4 Visibility and snapshots
+
+- **Default reads** read at `visibleSequence`: `get` seeks `(userKey, visibleSequence)`, and the
+  cursor ignores entries above it. A reader can therefore never see part of a group, or part of a
+  batch.
+- **`snapshot()`**:
+  - registers `visibleSequence` in a `SnapshotRegistry` — a `TreeMap<Long, Integer>` of sequence
+    → count, under its own lock;
+  - `close()` unregisters it.
+  - A snapshot pins no files. Retention is compaction's job: `smallestSnapshot` = the registry's
+    smallest key, or `visibleSequence` if the registry is empty.
+- **Reads at a snapshot:**
+  - `get(key, ReadOptions.at(s))` seeks `(key, s.sequence())`;
+  - `scan(..., ReadOptions.at(s))` seeks `(from, s.sequence())`. `ReconcilingCursor` gains its
+    **fourth rule**: skip every entry whose sequence > the read sequence.
+- **Leak backstop:** a `Cleaner` logs a `WARN` with the creation stack trace for a snapshot that
+  was never closed. Correctness never depends on it (N6).
+- **Metrics:** `snapshot.live.count` (gauge); `snapshot.oldest.age` (the oldest live snapshot's
+  age in sequence numbers).
+
+### 2.5 `OperationStats`
+
+- **What it is:** a mutable counter set. The caller creates one, passes it in `ReadOptions`, and
+  reads it afterwards. It is RocksDB's `PerfContext`, made explicit instead of thread-local, so
+  D6 can give every SQL operator its own.
+
+| Counter | Incremented when |
+|---|---|
+| `memtablesProbed` | `get` probes a memtable |
+| `tablesProbed` | `get` calls `ceiling` on an SSTable |
+| `filterSkips` | a bloom filter rules a table out (part 2) |
+| `blocksRead`, `bytesRead` | an SSTable data block is read and verified |
+| `entriesVisited` | a cursor or lookup examines an internal entry |
+| `versionsSkipped` | an older version of a key is passed over |
+| `tombstonesSkipped` | a tombstone hides a key during a scan, or ends a lookup |
+| `newerThanSnapshotSkipped` | the fourth rule skips an entry |
+
+- **Plumbing:** `SSTableReader.ceiling(key, stats)` and `SSTableReader.iterator(stats)`;
+  `ReconcilingCursor` holds the stats for its lifetime.
+- **Cost when unused.** With `null` stats every site pays one null check. Step 5's JMH benchmark
+  must show `get` with null stats within noise of M6's `get` before part 1 merges.
+
+## 3. Part 2 — design (decided — ADR-0017; SSTable format version 2)
+
+- **Keyed by the user key.** The filter is built from each entry's *user* key, not its internal
+  key, because a lookup knows only the user key (LevelDB's `InternalFilterPolicy` strips the
+  sequence the same way).
+- **One filter per table.** It is stored as a filter block: the bit array, then one byte holding
+  *k*. It is named in the metaindex as `filter.shale.bloom` → its `BlockHandle`.
+- **The hash.** LevelDB's `Hash(data, n, seed = 0xbc9f1d34)`, hand-written; the probes use double
+  hashing: `h += delta; delta = (h >>> 17) | (h << 15)` (Kirsch–Mitzenmacher, as LevelDB does).
+- **Sizing:**
+  - bits = max(64, keys × `bitsPerKey`), rounded up to a byte;
+  - *k* = round(`bitsPerKey` × 0.69), clamped to [1, 30];
+  - `ShaleOptions.bloomBitsPerKey`, default 10 (about 1% false positives); 0 writes no filter.
+- **Lookups.** `get` asks `table.mayContain(userKey)` before `ceiling`, and on "no" counts a
+  `filterSkip` and moves on. Scans do not use filters.
+- **Compatibility.** Footer `FORMAT_VERSION` 2. The reader accepts 1 (no filter: always probe) and
+  2. Flushes and compactions always write 2.
+
+## 4. New and changed types
+
+| Type | Package | Step |
+|---|---|---|
+| `WriteBatch`, `WriteBatchCodec` | `dev.shale`, `dev.shale.wal` | 2 |
+| `WalFormat` (version 2), `WalReader` (dispatch on version) | `dev.shale.wal` | 2 |
+| `WriteResult` (now public), `StorageBackend` (5 methods), `Shale`, `ReferenceBackend` (test) | `dev.shale` | 3 |
+| `Snapshot`, `SnapshotRegistry` (package-private), `ReadOptions` | `dev.shale` | 4 |
+| `ReconcilingCursor` (fourth rule, read sequence) | `dev.shale.iterator` | 4 |
+| `OperationStats`; stats-taking `SSTableReader.ceiling`/`iterator` | `dev.shale`, `dev.shale.sstable` | 5 |
+| `Hash`, `BloomFilter`, `BloomFilterBuilder` | `dev.shale.filter` | 7 |
+| `SSTableWriter` (collects user-key hashes, writes the filter), `SSTableReader` (loads it, `mayContain`), `SSTableFormat` (version 2) | `dev.shale.sstable` | 7 |
+| `ShaleOptions` (adds `bloomBitsPerKey`) | `dev.shale` | 7 |
+
+## 5. Steps
+
+### Step 1 — ADR-0016 (`adr/0016-batches-snapshots`), ~1 day
+`docs(api)`: records §2. Alternatives:
+- overloads per feature instead of `ReadOptions` (rejected: combinatorial growth);
+- thread-local stats as in RocksDB (rejected: D6 needs per-operator stats, and threads are shared);
+- snapshots pinning Versions (rejected: pins files; retention by sequence is enough);
+- a per-record version byte in the WAL (rejected: the segment header already carries a version).
+
+**Done when:** merged.
+
+### Step 2 — `WriteBatch` and WAL v2 (`m07/write-batch`), ~4 days
+1. `docs(wal)`: `wal/format.md` — v2 record layout, a worked hex example of a two-entry batch, the
+   version history.
+2. `feat(wal)`: `WriteBatch`, `WriteBatchCodec`; the writer thread writes v2 segments with one
+   record per batch; replay dispatches on version.
+3. `test(wal)`:
+   - the golden `golden/wal/v2/two-entry-batch.wal` and its `.json`;
+   - `GoldenWalTest` still reads the v1 golden;
+   - a round-trip property over random batches;
+   - bit-flip at every offset of the v2 golden;
+   - a count or length overrun is corruption.
+4. `test(recovery)`: `ShaleCrashTest` — a new test truncates a v2 segment holding three batches at
+   every byte offset. Recovery holds whole batches, never part of one.
+
+Commit the format with `Format-Change: wal v2 — one batch per record` and `Reversible: no`.
+**Done when:** these pass; existing tests green.
+
+### Step 3 — the public write API (`m07/write-api`), ~2 days
+1. `feat(api)`: `write`, `writeAsync`, public `WriteResult`, `StorageBackend` additions, the
+   `ReferenceBackend` implementation, the 32 MiB limit.
+2. `test(api)`, `ShaleWriteBatchTest`:
+   - a batch's keys all appear together;
+   - `writeAsync` A then B from one thread gives A.lastSequence < B.firstSequence;
+   - the caller may reuse a batch after the call;
+   - an empty batch is a no-op;
+   - an oversized batch → `IllegalArgumentException`;
+   - `writeAsync` returns before any sync (with syncs held).
+
+**Done when:** green.
+
+### Step 4 — visibility and snapshots (`m07/snapshots`), ~4 days
+1. `feat(api)`: default reads at `visibleSequence`; `Snapshot`, `SnapshotRegistry`,
+   `ReadOptions`; the cursor's fourth rule; `CompactionJob` receives the registry's smallest
+   snapshot; metrics; the leak `Cleaner`.
+2. `test(api)`, `ShaleSnapshotTest`:
+   - a snapshot taken before N writes reads exactly the pre-N state — after the writes, after a
+     flush, and after a compaction;
+   - closing it lets the next compaction drop the shadowed versions (`bytes.compaction.written`
+     shrinks accordingly);
+   - `close()` twice is harmless.
+3. `test(api)`, `ShaleBatchVisibilityTest`:
+   - with syncs held on a group of two batches, readers see neither;
+   - after release, readers see both, and never one without the other (a reader thread samples
+     both keys 10,000 times; each sample shows both or neither).
+
+**Done when:** green.
+
+### Step 5 — `OperationStats` (`m07/operation-stats`), ~3 days
+1. `feat(api)`: `OperationStats`; threaded through `get`, `SSTableReader`, `ReconcilingCursor`.
+2. `test(bench)`: `GetOverheadBenchmark` — `get` with null stats vs M6's tag, same data. Its
+   numbers go in the merge commit body.
+3. `test(api)`, `OperationStatsTest`, with exact expected counts:
+   - a key in L2 under two memtables and three overlapping L0 tables;
+   - a scan over 100 keys, 30 of them deleted: `tombstonesSkipped` = 30;
+   - a scan at a snapshot with 10 newer versions present: `newerThanSnapshotSkipped` = 10.
+
+**Done when:** exact counts match, and the overhead is within noise.
+
+### Step 6 — ADR-0017 (`adr/0017-bloom-filter`), ~½ day
+`docs(filter)`: records §3. Alternatives:
+- LevelDB's per-2 KiB filters (rejected: per-table is enough and simpler);
+- a filter keyed by internal key (rejected: useless for lookups).
+
+**Done when:** merged.
+
+### Step 7 — bloom filters (`m07/bloom`), ~4 days
+1. `docs(sstable)`: `sstable/format.md` v2 — the filter block, the metaindex entry, a worked
+   example, the version history.
+2. `feat(filter)`: `Hash`, `BloomFilter`, `BloomFilterBuilder`.
+3. `feat(sstable)`: the writer builds the filter; the reader loads it at open; `get` skips.
+4. **Tests:**
+   - `HashTest`: LevelDB's published test vectors;
+   - `BloomFilterPropertyTest`: no false negatives, including exhaustive sets up to 100 keys;
+   - `BloomFilterRateTest`: 10,000 keys, 100,000 absent probes (seeded); the measured
+     false-positive rate is within 15% of (1 − e^(−kn/m))^k at 5, 10 and 15 bits per key;
+   - `GoldenSSTableTest`: the v1 golden still reads; a new v2 golden with a filter; bit-flip on
+     the v2 golden;
+   - `OperationStatsTest`: a missing key over 5 tables reports 5 `filterSkips` and 0
+     `blocksRead`.
+
+Commit with `Format-Change: sstable v2 — filter block` and `Reversible: no`. **Done when:** green.
+
+### Step 8 — harnesses, documentation, tag (`m07/docs`), ~3 days
+1. `test(memtable)`: `EngineModelTest` adds batches and snapshot reads. The oracle copies its
+   `TreeMap` when a snapshot is taken.
+2. `test(recovery)`: `ShaleCrashMatrixTest` adds a batch workload. After recovery, every batch is
+   whole or absent.
+3. Docs:
+   - `package-info` for `filter`; N9 citations (LevelDB `write_batch.cc`, `snapshot.h`,
+     `bloom.cc`, `hash.cc`; RocksDB `PerfContext`; Bloom 1970; Kirsch–Mitzenmacher 2006);
+   - `architecture/m7-batches-snapshots-bloom.md` (the read-sequence rule, visibility across a
+     group, the filter on the lookup path);
+   - glossary rows: write batch, snapshot, read sequence, operation statistics, false-positive
+     rate;
+   - README status; changelog (with the measured false-positive rates and the `readmissing`
+     gain); the completion plan's status table.
+4. **Reconciliation pass for M8.** Tag `m7-mvcc-bloom`.
+
+## 6. Milestone acceptance gates
+
+- **Atomic batches:** whole or absent at every crash offset and to every reader.
+- **Snapshots:** exact pre-state across flush and compaction; retention released on close.
+- **Order:** `writeAsync` order = sequence order.
+- **Statistics:** exact counts in scripted scenarios; negligible cost when unused.
+- **Filters:** no false negatives; false-positive rate within 15% of theory; old tables still
+  read.
+- Every existing test stays green.
+
+## 7. Not in M7
+
+A block or table cache (out of scope, ADR-0013); per-level filter sizing (Monkey); prefix
+filters; filters on scans; transactions (D4 builds them on this milestone).
 
 ## References
 
-LevelDB `db/write_batch.cc`, `db/snapshot.h`, `util/bloom.cc`; RocksDB wiki "PerfContext and
-IOStatsContext" and "RocksDB Bloom Filter"; Bloom (1970); Kirsch & Mitzenmacher, "Less Hashing,
-Same Performance" (2006); Petrov, *Database Internals* ch. 5 and 7.
+LevelDB `db/write_batch.cc`, `db/snapshot.h`, `util/bloom.cc`, `util/hash.cc`,
+`db/dbformat.h` (`InternalFilterPolicy`); RocksDB wiki "PerfContext and IOStatsContext" and
+"RocksDB Bloom Filter"; Bloom, "Space/Time Trade-offs in Hash Coding" (CACM 1970); Kirsch &
+Mitzenmacher, "Less Hashing, Same Performance" (2006); Petrov, *Database Internals* ch. 5 and 7.
