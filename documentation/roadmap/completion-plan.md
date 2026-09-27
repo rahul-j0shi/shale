@@ -1,14 +1,20 @@
 # Completion plan — from M4 to ShaleDB v1.0
 
-**Status:** the working plan of record (2026-09-26). **Starts from:** `main` at `9cfa7d6`:
+**Status:** the working plan of record (2026-09-26; every milestone plan critiqued and rewritten
+to implementation level on 2026-09-27). **Starts from:** `main` at `9cfa7d6`:
 M0–M4 complete, `./gradlew build crashTest` green on JDK 25 (161 tests). **Why and what:** the
 [charter](charter.md) and [ADR-0013](../adr/0013-shaledb-see-through-database.md).
 
-This page orders everything left to build. Each milestone has a plan file with its decided
-design, task order and acceptance gates. Pick up the first milestone in §10 that is not ✅ and
-follow its plan. **The next milestone's plan is always the detailed one** (§5 step 1): M5's
-plan names every type, file, step, branch and test; later plans are made that concrete by the
-detail pass at the end of the milestone before them.
+This page orders everything left to build. Pick up the first milestone in §10 that is not ✅ and
+follow its plan. **Every plan uses one template:**
+- where the code will be at its start;
+- the decided design, down to byte layouts, algorithms and error codes;
+- a table of the new and changed types;
+- branch-sized steps, each with commits, named tests and a "done when";
+- the milestone's acceptance gates.
+
+Plans for later milestones name types that earlier ones will create. §5 step 1's reconciliation
+pass keeps them true to the code as it actually lands.
 
 ## 1. What "finished" means
 
@@ -54,8 +60,8 @@ ADR-0013 records it and why.
 | Step | Why it is in the plan |
 |---|---|
 | **M5** manifest | Without durable metadata no file can be deleted safely, so compaction is impossible. It also closes the known lifecycle gaps: operations after `close`, the six-digit file-number limit, no directory fsync. |
-| **M5.5** write path | Background flush and write stalls are prerequisites for compaction. Group commit is what `EXPLAIN ANALYZE` shows as "fsync shared with *N* commits", and M8's experiment E3 measures it. |
-| **M6** compaction | What makes this an LSM engine, and the source of the deferred costs the thesis is about. Leveled first; size-tiered second so the tradeoff can be measured (E1, F3). |
+| **M5.5** write path | A dedicated WAL-writer thread gives group commit, and a submission that never does I/O in the caller's thread, which D4's commit protocol needs. Background flush and write stalls are prerequisites for compaction. The shared fsync is what `EXPLAIN ANALYZE` shows as "shared(*N*)". |
+| **M6** compaction | What makes this an LSM engine, and the source of the deferred costs the thesis is about. Leveled first; size-tiered (RocksDB-universal style, which keeps runs in age order) second, so the tradeoff can be measured (E1, F3). |
 | **M7** batches, snapshots, bloom, statistics | Atomic batches and snapshots are what a relational layer's correctness rests on. Bloom filters make the duplicate-key check of every `INSERT` cheap. Per-operation statistics are the hook cost accounting needs. |
 | **M8** benchmarks | Turns engine claims into numbers, with RocksDB as the reference. Ends a complete stopping point. |
 | **D1** record layer | Tables and indexes as ordered keys — the core idea of SQL on an LSM (MyRocks, CockroachDB). |
@@ -91,11 +97,11 @@ estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken
 
 ## 5. How to execute any milestone
 
-1. **Detail pass (done as the last task of the previous milestone).** Before a milestone starts,
-   its plan must name every new or changed type and file, split the work into branch-sized
-   steps, and give each step its commits, its named tests and a "done when". Use M5's plan as
-   the template. A plan written before the code it builds on exists cannot name those types;
-   this pass is where it catches up.
+1. **Reconciliation pass** (the last task of the previous milestone). Re-read the next plan
+   against the code that actually landed. Fix any type name, signature or file path that
+   changed, and any "where the code will be" fact that is no longer true, in a `docs` commit
+   before the milestone starts. The plans are written ahead of the code they build on, and this
+   pass is what keeps them exact.
 2. Toolchain, once per shell: `./scripts/bootstrap.sh && source scripts/env.sh`.
 3. For each step, branch `mNN/<slug>` (engine) or `dNN/<slug>` (database) from an up-to-date
    `main`. Read the plan, the `package-info.java` and `format.md` of the packages it touches, and
@@ -120,21 +126,24 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 
 | ADR | Milestone | Records |
 |---|---|---|
-| 0012 | M5 | manifest format; open and flush order; `Version` ownership; failed state and close; the `Env` seam |
-| 0014 | M5.5 | LevelDB writer queue, one group in flight; watermarks; fail-stop on fsync error; background flush and stalls |
-| 0015 | M6 | leveled first, size-tiered second; level invariants; point-lookup order; `ShaleOptions` |
+| 0012 | M5 | manifest format (with per-file sequence ranges); open and flush order; `Version` ownership; failed state and close; the public `Env` SPI; `ShaleOptions` |
+| 0014 | M5.5 | a dedicated WAL-writer thread (amends ADR-0008's leader/follower); watermarks; fail-stop on fsync error; background flush and stalls; `GROUP` as an alias of `SYNC` |
+| 0015 | M6 | leveled first, then RocksDB-universal-style tiered; level invariants; point-lookup order; `flush`/`compactRange`; compaction debt |
 | 0016 | M7 (1) | `WriteBatch`, `writeAsync`, `Snapshot`, `ReadOptions`, `OperationStats`; WAL v2 |
 | 0017 | M7 (2) | whole-table bloom filter, double hashing, 10 bits/key; SSTable v2 |
 | 0018 | D1 | order-preserving key encoding; keyspaces; row format; catalog; index states |
 | 0019 | D2 | the frozen SQL subset; strict types; three-valued logic; rule-based planner |
-| 0020 | D4 | serializable backward-validation OCC; commits enqueued in commit order |
+| 0020 | D4 | serializable backward-validation OCC; commits enqueued in commit order; DDL through the oracle, blocking writes |
 | 0021 | D5 | the PostgreSQL protocol subset; types; error codes; threading |
-| 0022 | D6 | per-operator statistics; `EXPLAIN ANALYZE` output; system tables |
+| 0022 | D6 | per-operator statistics; `EXPLAIN ANALYZE` output; cost notices; system tables |
 
 **Public API changes to `shale-core`** (each in its ADR, with a `Reversible:` trailer):
-- M5: closed-state and repeated-close semantics.
-- M6: `ShaleOptions`.
-- M7: `write`, `writeAsync`, `snapshot`, `ReadOptions`, `OperationStats`.
+- M5: `ShaleOptions`; the `Env` SPI (`dev.shale.env`); `open(…, Env)`; closed-state and
+  repeated-close semantics.
+- M5.5: `ShaleOptions` fields; `Durability.GROUP` documented as an alias.
+- M6: `ShaleOptions` fields; `flush()`; `compactRange(from, to)`.
+- M7: `WriteBatch`, `WriteResult`, `write`, `writeAsync`, `Snapshot`, `ReadOptions`,
+  `OperationStats`; `bloomBitsPerKey`.
 
 **Test tiers come alive:**
 - M5: `FaultInjectionEnv` — a crash and simulated power loss at every file operation;
@@ -152,7 +161,11 @@ All per ADR-0013. `shale-core`, `shale-db` and `shale-server` stay at zero runti
   - pgjdbc in `shale-demo`, at runtime;
   - SQLite (JDBC) in `shale-bench`, as a reference baseline.
 
-Each arrives with its scoped Checkstyle suppression and an update to `java-style.md` §1.
+Each arrives with an update to `java-style.md` §1. Where a Checkstyle import ban is in the way,
+the exception is a Checker-level `SuppressionSingleFilter`: it targets the ban's module `id`
+(`bannedDependencies` for `org.rocksdb` in `shale-bench/…/baseline/`; `bannedJdkApis` for
+`com.sun.net.httpserver` in `DemoHttpServer.java`), scoped by file path. `verifyModuleGraph`
+(M8) enforces the module arrows of CLAUDE.md §2 in `check`.
 
 ## 8. Cut lines
 
@@ -163,7 +176,7 @@ phase first: after M7, go to D1–D6, then M8, then D7 (D7 needs M8's report).
 1. SQLite and RocksDB baselines (the numbers lose their context, not their meaning);
 2. size-tiered as a second policy (E1 and F3 become memtable-size and bloom sweeps);
 3. D3's outer joins, `HAVING` and `DISTINCT`;
-4. engine group commit (the fsync line in `EXPLAIN ANALYZE` then always reads "not shared");
+4. the demo's engine panel (keep the cost drawer: it is the thesis);
 5. one of the three write-ups.
 
 **Never cut:** M5, M6's leveled compaction, M7, D4's serializable commit, D5, D6, or the crash

@@ -107,9 +107,10 @@ dev.shale.compaction     dev.shale.db.table
 dev.shale.filter         dev.shale.db.sql
 dev.shale.manifest       dev.shale.db.plan
 dev.shale.iterator       dev.shale.db.exec
-dev.shale.internal       dev.shale.db.txn
-  ← not public API       dev.shale.db.cost
-                         dev.shale.server           ← shale-server (D5)
+dev.shale.env            dev.shale.db.txn
+dev.shale.internal       dev.shale.db.cost
+  ← not public API       dev.shale.server           ← shale-server (D5)
+                         dev.shale.server.pgwire
                          dev.shale.demo             ← shale-demo (D7)
 ```
 
