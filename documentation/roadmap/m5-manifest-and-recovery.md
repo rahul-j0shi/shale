@@ -58,13 +58,16 @@ harness that proves the durability claim under simulated power loss, not only pr
 | 4 | last sequence | varint64 |
 | 5 | compaction pointer | varint32 level, varint32 length + internal key |
 | 6 | deleted file | varint32 level, varint64 file number |
-| 7 | new file | varint32 level, varint64 number, varint64 size bytes, varint32 length + smallest internal key, varint32 length + largest internal key |
+| 7 | new file | varint32 level, varint64 number, varint64 size bytes, varint64 smallest sequence, varint64 largest sequence, varint32 length + smallest internal key, varint32 length + largest internal key |
 
 - **Validation:** an unknown tag, a field that overruns the record, or a level outside 0–6 is
   `CorruptionException`. Adding a tag later is a version bump.
 - **Tails:** a torn record at the very end of the manifest is dropped. It was never synced, so it
   never took effect. Anything else is corruption.
 - **Tag 5** is written by M6. It is defined now so M6 needs no format change.
+- **Tag 7 carries each file's sequence range** (RocksDB's `FileMetaData` does the same; LevelDB
+  does not). Once compaction writes new files, a file's number no longer says how new its data
+  is, so M6 orders level-0 files, and size-tiered runs, by their largest sequence.
 
 ### 2.3 Opening a database (`Shale.open`), in order
 
@@ -79,8 +82,9 @@ harness that proves the durability claim under simulated power loss, not only pr
        `IllegalArgumentException` (a configuration error, `errors-and-logging.md` §1).
    - **No `CURRENT`, but `.sst` or `.wal` files present:** this is the M4 layout. Build the state
      with today's discovery code:
-     - every table at level 0, ordered by number;
-     - last sequence from scanning the tables;
+     - every table at level 0; one scan of each table gives its smallest and largest key and
+       sequence (the scan `Shale.maxSequenceOf` already does);
+     - last sequence = the largest of those;
      - log number 0, so every segment replays.
    - **Neither:** a new database — empty, next file number 1.
 4. **Open tables.** Open every table in the state. A missing one throws
@@ -124,8 +128,8 @@ harness that proves the durability claim under simulated power loss, not only pr
 4. **Publish** the view: the active memtable, no immutables, the new Version.
 5. **Clean up.** Delete WAL segments below the new log number. A failure here is counted, not
    fatal.
-6. **Rollover.** If the manifest now exceeds `manifestRolloverBytes` (default 4 MiB; tests use
-   ~1 KiB), write a new manifest with a full-state edit and switch `CURRENT` (open steps 8–9 in §2.3).
+6. **Rollover.** If the manifest now exceeds `ShaleOptions.manifestRolloverBytes` (default
+   4 MiB; tests use ~1 KiB), write a new manifest with a full-state edit and switch `CURRENT` (open steps 8–9 in §2.3).
    Then delete the old manifest.
 
 **Any `IOException` in flush steps 1–3 or 6 puts the engine in the failed state (§2.6).**
@@ -165,7 +169,10 @@ harness that proves the durability claim under simulated power loss, not only pr
 
 ### 2.7 The I/O seam and the crash harness
 
-- **`dev.shale.internal.fs.Env`** — LevelDB's `Env`, cut down to what the engine uses:
+- **`dev.shale.env.Env`** — LevelDB's `Env`, cut down to what the engine uses. It is **public**
+  API, as LevelDB's and RocksDB's are, because layers above the engine must be able to pass one
+  in: ShaleDB's crash tests inject `FaultInjectionEnv` through `Database.open`, and `shale-db`
+  may use only `shale-core`'s public API (CLAUDE.md §2).
 
   ```java
   public interface Env {
@@ -190,8 +197,9 @@ harness that proves the durability claim under simulated power loss, not only pr
   `PosixEnv` wraps `FileChannel` (`force(true)` for `sync`; directory sync is
   `FileChannel.open(dir, READ).force(true)`, supported on Linux and macOS). `ReadableFile` is
   LevelDB's `RandomAccessFile`, renamed to avoid clashing with `java.io.RandomAccessFile`.
-- **`FaultInjectionEnv`** (test scope, after RocksDB's `FaultInjectionTestEnv`) wraps `PosixEnv`
-  over a real temp directory. It gives each test three things:
+- **`FaultInjectionEnv`** (after RocksDB's `FaultInjectionTestEnv`) lives in `shale-core`'s
+  **test fixtures** (Gradle's `java-test-fixtures` plugin), so the test suites of `shale-db` and
+  `shale-server` can use it too. It wraps `PosixEnv` over a real temp directory. It gives each test three things:
   - **A trace.** Every mutating operation (create, append, sync, rename, delete, directory sync)
     gets an index. `crashAt(n)` makes operation *n* throw `SimulatedCrash`, an `Error`, so no
     engine `catch (IOException)` can swallow it.
@@ -216,18 +224,19 @@ harness that proves the durability claim under simulated power loss, not only pr
 
 | Type | Package | Visibility | Step |
 |---|---|---|---|
-| `Env`, `WritableFile`, `ReadableFile`, `PosixEnv` | `dev.shale.internal.fs` | public (internal) | 2 |
-| `FaultInjectionEnv`, `SimulatedCrash` | `dev.shale.internal.fs` (test) | test | 3 |
+| `Env`, `WritableFile`, `ReadableFile`, `PosixEnv` | `dev.shale.env` | public | 2 |
+| `FaultInjectionEnv`, `SimulatedCrash` | `dev.shale.env` (`shale-core` test fixtures) | test fixture | 3 |
 | `LogWriter`, `LogReader` (block framing, magic and version as parameters) | `dev.shale.internal.log` | public (internal) | 5 |
 | `WalWriter`, `WalReader` | `dev.shale.wal` | unchanged API; delegate to `LogWriter`/`LogReader` | 5 |
 | `VersionEdit` (record), `VersionEditCodec`, `ManifestWriter`, `ManifestReader`, `CurrentFile` | `dev.shale.manifest` | public | 5 |
-| `FileMetadata` (record: level, number, size, smallest, largest) | `dev.shale.manifest` | public | 6 |
+| `FileMetadata` (record: level, number, size, smallest and largest sequence, smallest and largest key) | `dev.shale.manifest` | public | 6 |
 | `Version`, `VersionSet` | `dev.shale.manifest` | public | 6 |
 | `SSTableReader` | `dev.shale.sstable` | adds `markObsolete()`; takes an `Env` | 2, 6 |
-| `SSTableWriter` | `dev.shale.sstable` | adds `smallestKey()`, `largestKey()`, `fileSizeBytes()` | 7 |
+| `SSTableWriter` | `dev.shale.sstable` | adds `smallestKey()`, `largestKey()`, `smallestSequence()`, `largestSequence()`, `fileSizeBytes()` | 7 |
 | `ReconcilingCursor` | `dev.shale.iterator` | takes one *adopted* `ReferenceCounted` instead of retaining a list | 7 |
 | `CorruptionException` | `dev.shale` | adds a constructor with a `Path`; the message names the file | 4 |
-| `Shale` | `dev.shale` | public API unchanged; adds a package-private `open(..., Env)` for tests | 2, 7 |
+| `ShaleOptions` (record: `writeBufferSizeBytes`, `manifestRolloverBytes`; `defaults()`, `withX`) | `dev.shale` | public | 2 |
+| `Shale` | `dev.shale` | adds public `open(Path, ShaleOptions, Clock, Metrics)` and `open(Path, ShaleOptions, Clock, Metrics, Env)`; existing overloads delegate | 2, 7 |
 
 ## 4. Steps
 
@@ -243,27 +252,36 @@ Each step is one branch off `main`, merged green before the next starts. Commit 
    - an in-memory simulated filesystem for crash tests (rejected: a second filesystem to get
      right; truncating real append-only files models power loss exactly).
 
-   It also lists the public behaviour changes: `close()` semantics, `LOCK`, the failed state, and
-   `ReconcilingCursor` adopting a reference. Set it `Accepted`; update the ADR index.
+   It also lists the public API and behaviour changes: `ShaleOptions`; the public `Env` SPI;
+   `close()` semantics;
+   `LOCK`; the failed state; `ReconcilingCursor` adopting a reference. Set it `Accepted`; update the ADR index.
 
 **Done when:** the ADR is merged. No code changes in this step.
 
 ### Step 2 — the `Env` seam (`m05/env-seam`), ~2 days, no behaviour change
-1. `refactor(api)`: add `Env`, `WritableFile`, `ReadableFile`, `PosixEnv`, with `package-info`.
+1. `feat(api)`: add `Env`, `WritableFile`, `ReadableFile`, `PosixEnv` in `dev.shale.env`, with
+   `package-info`.
 2. `test(api)`: `EnvContractTest` — create-new fails if the file exists, append then read back,
    sync, atomic rename replaces the target, delete, children, lock held twice fails.
 3. `refactor(wal)`, `refactor(sstable)`: `WalWriter`, `WalReader`, `SSTableWriter` and
    `SSTableReader` take an `Env`. Their existing public `open` overloads delegate with
    `Env.DEFAULT`.
-4. `refactor(api)`: `Shale` does all file operations through its `Env`; add a package-private
-   `open(Path, Clock, Metrics, long, Env)`.
+4. `feat(api)`: `ShaleOptions`, a public record with `writeBufferSizeBytes` and
+   `manifestRolloverBytes`. It has `static ShaleOptions defaults()` (4 MiB and 4 MiB) and a
+   `withX(...)` method per field; the compact constructor rejects non-positive sizes. Later
+   milestones add fields, so callers construct it through `defaults()`, never the canonical
+   constructor (say so in its Javadoc). Add public `Shale.open(Path, ShaleOptions, Clock,
+   Metrics)`; the existing `open` overloads delegate to it.
+5. `refactor(api)`: `Shale` does all file operations through its `Env`; add public
+   `open(Path, ShaleOptions, Clock, Metrics, Env)`.
 
 **Done when:** all 161 existing tests pass unchanged, and `grep -rn "FileChannel.open\|Files\."`
 in `shale-core/src/main` finds only `PosixEnv`.
 
 ### Step 3 — the crash harness (`m05/fault-injection-env`), ~3 days
-1. `test(api)`: `FaultInjectionEnv` + `SimulatedCrash`.
-2. `test(api)`: `FaultInjectionEnvTest`:
+1. `build(build)`: apply `java-test-fixtures` to `shale-core`.
+2. `test(api)`: `FaultInjectionEnv` + `SimulatedCrash` in `shale-core/src/testFixtures/java`.
+3. `test(api)`: `FaultInjectionEnvTest`:
    - unsynced appends vanish on `dropUnsyncedData`;
    - an unsynced create or rename is undone, a synced one stays;
    - a delete not followed by a directory sync is undone;
@@ -334,7 +352,8 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
 1. `test(recovery)`: **before changing `open`**, a test-only generator uses the current (M4)
    engine to create `golden/db/m4-layout/`: two SSTables plus one WAL segment with unflushed
    records, with a `.json` of the expected contents. Commit the fixture.
-2. `feat(sstable)`: `SSTableWriter.smallestKey()`, `largestKey()`, `fileSizeBytes()`.
+2. `feat(sstable)`: `SSTableWriter.smallestKey()`, `largestKey()`, `smallestSequence()`,
+   `largestSequence()`, `fileSizeBytes()`.
 3. `feat(iterator)`: `ReconcilingCursor` adopts one reference; update `Shale.scan` and the cursor
    tests.
 4. `feat(recovery)`: `Shale.open` implements §2.3, `switchAndFlush` §2.4, reads §2.5, failure and
@@ -374,14 +393,14 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
 **Done when:** the matrix is green for a fixed seed in CI and for 20 seeds locally.
 
 ### Step 9 — documentation and the tag (`m05/docs`), ~2 days
-- `package-info` for `internal.fs`, `internal.log` and `manifest` (threading, ownership, N9
+- `package-info` for `env`, `internal.log` and `manifest` (threading, ownership, N9
   citations: LevelDB `version_set.cc`, `version_edit.cc`, `env.h`; RocksDB `FaultInjectionTestEnv`).
 - Glossary rows: `Env`, `WritableFile`, `ReadableFile`, `FaultInjectionEnv`, `VersionSet`,
   `FileMetadata`, `CURRENT`, log number.
 - `architecture/m5-manifest-and-recovery.md`: the open sequence, the flush sequence with every
   sync marked, the Version ownership diagram, and the test map. Validate the Mermaid.
 - README status, a `CHANGELOG.md` entry, the completion plan's status table.
-- **Detail pass for M5.5:** update its plan to name the types M5 actually shipped
+- **Reconciliation pass for M5.5:** update its plan to name the types M5 actually shipped
   (completion plan §5).
 - Tag `m5-manifest`.
 
