@@ -23,7 +23,7 @@ scans over encoded key ranges), `Catalog`, `Value` (with the canonical order), a
 
 ```text
 script      = statement { ";" statement } [ ";" ] ;
-statement   = create_table | create_index | drop_table | drop_index
+statement   = create_table | create_index | drop_table | drop_index | alter_table
             | insert | select | update | delete | explain ;
 create_table= "CREATE" "TABLE" ident "(" column_def { "," column_def } [ "," pk_clause ] ")" ;
 column_def  = ident type [ "NOT" "NULL" ] [ "PRIMARY" "KEY" ] ;
@@ -35,6 +35,7 @@ type        = "BIGINT" | "INT" | "INTEGER" | "INT8"                      (* → 
 create_index= "CREATE" [ "UNIQUE" ] "INDEX" ident "ON" ident "(" ident { "," ident } ")" ;
 drop_table  = "DROP" "TABLE" ident ;
 drop_index  = "DROP" "INDEX" ident ;                 (* index names are unique database-wide *)
+alter_table = "ALTER" "TABLE" ident "ADD" [ "COLUMN" ] ident type ;   (* nullable only *)
 insert      = "INSERT" "INTO" ident [ "(" ident { "," ident } ")" ]
               "VALUES" row { "," row } ;
 row         = "(" expr { "," expr } ")" ;
@@ -79,6 +80,7 @@ literal     = integer | decimal | string | "TRUE" | "FALSE" | "NULL" ;
   | `42P01` | undefined table |
   | `42703` | undefined column |
   | `42P07` | duplicate table or index (a relation, as in PostgreSQL) |
+  | `42701` | duplicate column |
   | `42883` | type error |
   | `42P18` | parameter type unknown |
   | `22003` | numeric overflow |
@@ -86,7 +88,14 @@ literal     = integer | decimal | string | "TRUE" | "FALSE" | "NULL" ;
   | `23505` | unique violation (from D1) |
   | `23502` | not-null violation (from D1) |
   | `53200` | query memory limit exceeded |
-  | `0A000` | feature not supported |
+  | `54000` | a key or row over the engine's size limits (from D1) |
+  | `0A000` | feature not supported, including `ADD COLUMN … NOT NULL` and a prepared statement whose result columns a DDL changed |
+
+- **`ALTER TABLE t ADD COLUMN c type`** calls `Database.addColumn` (D1 §2.7): one descriptor
+  write, whatever the table's size. Existing rows read `c` as NULL.
+  - **Why only this form.** Adding a nullable column is the schema change every application makes
+    first, and the row format makes it free. `DROP COLUMN`, `RENAME`, defaults and `NOT NULL` would
+    each need either a row rewrite or a second schema version per row. They are not planned.
 
 ### 2.3 Planning (rule-based, after parameters are bound)
 
@@ -175,6 +184,13 @@ public record CountResult(String tag, long count) implements Result { }   // e.g
   `CREATE TABLE`, …), because D5 sends them verbatim.
 - **`PreparedStatement`** exposes its parameter types after binding and describes its result
   columns (both D5 needs); it is executed with values.
+- **A stale `PreparedStatement`.** A statement records the `Catalog.version()` it was bound
+  against. If a DDL has run since, the next `execute` binds it again.
+  - **Parameter types or result columns changed** (a `SELECT *` after `ADD COLUMN`): it fails
+    with `0A000`, "cached plan must not change result type", as PostgreSQL's does, because the
+    client already holds the old row description.
+  - **The table is gone:** the fresh bind reports `42P01`, instead of executing against a dropped
+    descriptor.
 
 ### 2.7 How D2 is tested
 
@@ -226,7 +242,9 @@ public record CountResult(String tag, long count) implements Result { }   // e.g
 - JDBC-style `?` parameters (rejected: PostgreSQL clients send `$n`);
 - a plan cache (rejected: no need at this scale, and planning with values gives better plans);
 - implicit text-number casts (rejected: silent coercion hides bugs);
-- a reverse cursor for `DESC` (rejected: a sort is enough).
+- a reverse cursor for `DESC` (rejected: a sort is enough);
+- a full `ALTER TABLE` (rejected: every form but a nullable `ADD COLUMN` needs a row rewrite or
+  a schema version per row).
 
 **Done when:** merged.
 
@@ -272,10 +290,19 @@ zero), `MemoryBudget`. Tests:
    statement boundaries.
 2. `test(sql)`: `LogicTestRunner`, and the suites `ddl.slt`, `insert.slt`, `select.slt`,
    `update.slt`, `delete.slt`, `nulls.slt`, `constraints.slt`, `ordering.slt`, `params.slt`,
-   `errors.slt`.
-3. `test(sql)`: `HalloweenTest` — `UPDATE t SET k = k + 1000` over 1,000 rows with an index on
+   `errors.slt`, `alter.slt`. `alter.slt` covers:
+   - old rows read the new column as NULL;
+   - new rows store it;
+   - an index on it;
+   - `NOT NULL` → `0A000`;
+   - a duplicate name → `42701`.
+3. `test(api)`: `PreparedStatementStalenessTest`:
+   - a `SELECT *` prepared before `ADD COLUMN` → `0A000`;
+   - a `SELECT a` prepared before it still runs;
+   - a statement over a dropped table → `42P01`.
+4. `test(sql)`: `HalloweenTest` — `UPDATE t SET k = k + 1000` over 1,000 rows with an index on
    `k`: each row is updated exactly once, and `verify()` is clean.
-4. `test(sql)`: `StatementAtomicityTest` — a 500-row `INSERT` whose 300th row violates a
+5. `test(sql)`: `StatementAtomicityTest` — a 500-row `INSERT` whose 300th row violates a
    constraint leaves nothing.
 
 **Done when:** green.
@@ -287,7 +314,19 @@ zero), `MemoryBudget`. Tests:
    - `architecture/d2-sql-and-execution.md` (text → tokens → AST → bound tree → plan → operators,
      one query traced);
    - glossary rows (`AccessPath`, `Operator`, `LogicalPlan`/`PhysicalPlan`, sargable, binder);
-   - README status, changelog, the completion plan's status table.
+   - README status, changelog, the completion plan's status table;
+   - **`documentation/guides/shaledb-sql.md`**, the SQL reference a user writes queries from. It
+     has:
+     - every statement, with an example;
+     - the types, and how to store what they lack: timestamps as `BIGINT` epoch milliseconds,
+       ids generated by the application (and why not a sequence: FAQ);
+     - NULL semantics;
+     - every SQLSTATE the database raises, and what to do about each;
+     - **"Differences from PostgreSQL"**: every place the same SQL behaves differently or is
+       rejected (strict casts, no quoted identifiers, `ADD COLUMN` only, …).
+
+     Each example in it is also a line of `guide.slt`, so the guide cannot drift from the code.
+     D3, D4 and D6 extend it.
 3. **Reconciliation pass for D3.** Tag `d2-sql`.
 
 ## 5. Milestone acceptance gates
@@ -302,7 +341,8 @@ zero), `MemoryBudget`. Tests:
 
 Joins, aggregates, `DISTINCT`, `IN`, `BETWEEN`, `LIKE`, top-N (D3); `BEGIN`/`COMMIT` (D4); the
 PostgreSQL protocol (D5); `EXPLAIN ANALYZE` (D6). Not planned: subqueries, `INSERT … SELECT`,
-defaults, `ALTER TABLE`, quoted identifiers, a plan cache.
+defaults, `ALTER TABLE` forms other than a nullable `ADD COLUMN`, quoted identifiers, a plan
+cache.
 
 ## References
 

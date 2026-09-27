@@ -400,6 +400,14 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
 - `architecture/m5-manifest-and-recovery.md`: the open sequence, the flush sequence with every
   sync marked, the Version ownership diagram, and the test map. Validate the Mermaid.
 - README status, a `CHANGELOG.md` entry, the completion plan's status table.
+- `guides/embedding-shale.md`:
+  - `ShaleOptions` and `open(dir, options, …)` in the API section;
+  - `CURRENT`, `MANIFEST-*` and `LOCK` in the on-disk table;
+  - the closed and failed states in the errors table (`EngineStateException`);
+  - the migration of an M4 directory;
+  - the limitations table loses its `LOCK`, `close` and safe-deletion rows.
+
+  The FAQ's two-processes answer loses "before M5".
 - **Reconciliation pass for M5.5:** update its plan to name the types M5 actually shipped
   (completion plan §5).
 - Tag `m5-manifest`.

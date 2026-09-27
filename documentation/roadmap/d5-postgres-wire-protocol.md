@@ -217,8 +217,21 @@ limits, binary formats, `CancelRegistry`, `SET`/`SHOW`, `synchronous_commit`,
    - Runs 20 seeds.
 3. `build(ci)`: a CI step installs `postgresql-client` if missing and runs `scripts/psql-smoke.sql`
    through `psql` against a started server: DDL, DML, a transaction, an error with position.
+4. `build(ci)`: **a second language.** A CI step installs `psycopg2-binary` with `pip` and runs
+   `scripts/python-smoke.py` against a started server. The script:
+   - creates a table;
+   - inserts with parameters;
+   - selects;
+   - commits, in psycopg2's default mode, which opens a transaction implicitly;
+   - checks that a unique violation surfaces as `psycopg2.errors.UniqueViolation`.
 
-**Done when:** `ServerKillTest` passes 20 of 20 in `crashTest`; the CI `psql` step is green.
+   **Why:** "any PostgreSQL client" is a claim, and pgjdbc alone does not prove it. psycopg2
+   uses only the simple query protocol with client-side parameters, the opposite path from
+   pgjdbc's extended protocol, so the two drivers together cover both. Python is a CI tool
+   here, not a dependency of any module.
+
+**Done when:** `ServerKillTest` passes 20 of 20 in `crashTest`; the CI `psql` and Python steps are
+green.
 
 ### Step 7 — packaging, documentation, tag (`d05/docs`), ~2 days
 - `installDist`, `Dockerfile`, `scripts/shaledb.sh`.
@@ -226,6 +239,31 @@ limits, binary formats, `CancelRegistry`, `SET`/`SHOW`, `synchronous_commit`,
   message flow, threading.
 - Glossary rows (portal, prepared statement, `ReadyForQuery` status).
 - README quickstart: `bin/shaledb --dir data` then `psql -h 127.0.0.1 -p 5433`.
+- **`documentation/guides/shaledb-quickstart.md`**, for someone who wants to *use* the database.
+  It covers:
+  - **Running the server three ways:** `bin/shaledb`, `scripts/shaledb.sh`, and Docker. It gives
+    the flags, the port, and where the data lives.
+  - **Connecting, with a copy-paste example for each:**
+    - `psql`;
+    - JDBC: the URL, and a 15-line Java program;
+    - Python: psycopg2;
+    - any other PostgreSQL driver, with what to expect.
+  - **A first session:** create a table, insert, query, a transaction, and `EXPLAIN`.
+  - **Writing an application against it:**
+    - retry on `40001`;
+    - generate ids in the application;
+    - store times as epoch milliseconds;
+    - set `synchronous_commit` per session.
+  - **What will not work, and why:**
+    - `pg_catalog` introspection: ORMs' schema discovery and `psql`'s `\d`;
+    - authentication and TLS: bind to localhost only;
+    - `COPY`.
+  - **Stopping it safely**, and backing it up. Until D7's `BACKUP TO`, backup means stopping the
+    server and copying the directory.
+
+  Its snippets are the CI smoke scripts' contents, so they cannot drift.
+- `guides/shaledb-sql.md` gains a "Sessions and settings" section: `SET`/`SHOW` and
+  `synchronous_commit`. The FAQ's "How will I connect" answer loses "planned".
 - Changelog; the completion plan's status table.
 - **Reconciliation pass for D6.** Tag `d5-pgwire`.
 

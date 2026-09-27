@@ -68,6 +68,16 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
 - **Limits.** A batch over 32 MiB is `IllegalArgumentException`. With the queue bound at 64 MiB
   (M5.5), a lone maximum batch is always admitted. The queue admits a request while queued bytes
   are *at or below* the bound, even if it pushes over.
+- **Key and value limits.** A key over **16 KiB** or a value over **16 MiB** is
+  `IllegalArgumentException`, checked in `WriteBatch.put`/`delete` and so by every write path.
+  - **Why a stated limit.** Until M7 the only limit is an accident of the encodings (a varint32
+    length), and a user finds it by failing. A stated limit is part of the API, and the
+    embedding guide documents it.
+  - **Why these numbers.** A key is copied into index blocks, restart points and the memtable's
+    nodes, so a large key costs many times its size; 16 KiB is far above any sensible key.
+    16 MiB is half the batch limit, so a maximum value always fits in a batch.
+  - **D1** maps the error to SQLSTATE `54000` (`program_limit_exceeded`) for a row or index key
+    over the limit.
 - **Old methods.** `put`, `delete`, `get(byte[])` and `scan(from, to)` stay. They become a
   one-entry batch and `ReadOptions.DEFAULT` respectively.
 - **The test backend.** `ReferenceBackend` implements the new methods: batches applied atomically
@@ -206,13 +216,15 @@ Commit the format with `Format-Change: wal v2 — one batch per record` and `Rev
 
 ### Step 3 — the public write API (`m07/write-api`), ~2 days
 1. `feat(api)`: `write`, `writeAsync`, public `WriteResult`, `StorageBackend` additions, the
-   `ReferenceBackend` implementation, the 32 MiB limit.
+   `ReferenceBackend` implementation, the 32 MiB limit, the key and value limits.
 2. `test(api)`, `ShaleWriteBatchTest`:
    - a batch's keys all appear together;
    - `writeAsync` A then B from one thread gives A.lastSequence < B.firstSequence;
    - the caller may reuse a batch after the call;
    - an empty batch is a no-op;
    - an oversized batch → `IllegalArgumentException`;
+   - a 16 KiB key and a 16 MiB value are accepted; one byte more of either →
+     `IllegalArgumentException`, through `put` and through `WriteBatch`;
    - `writeAsync` returns before any sync (with syncs held).
 
 **Done when:** green.
@@ -282,7 +294,10 @@ Commit with `Format-Change: sstable v2 — filter block` and `Reversible: no`. *
    - glossary rows: write batch, snapshot, read sequence, operation statistics, false-positive
      rate;
    - README status; changelog (with the measured false-positive rates and the `readmissing`
-     gain); the completion plan's status table.
+     gain); the completion plan's status table;
+   - `guides/embedding-shale.md`: `WriteBatch`, `writeAsync`, snapshots and `ReadOptions` in the
+     API section; the key and value limits; the lifted rows of the limitations table. The FAQ's
+     transactions answer.
 4. **Reconciliation pass for M8.** Tag `m7-mvcc-bloom`.
 
 ## 6. Milestone acceptance gates

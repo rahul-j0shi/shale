@@ -20,6 +20,9 @@ split a topic across two, never invent a parallel system.
 | `documentation/architecture/<milestone>-*.md` | the **as-built explainer** — how the shipped code actually works, as HLD/LLD with diagrams | alongside the code, same milestone |
 | `documentation/roadmap/` | **intent** — the charter (why and scope), the completion plan, a plan per milestone | plan before the milestone starts |
 | `CHANGELOG.md` | **what shipped** — one short entry per finished milestone | when the milestone is tagged |
+| `documentation/guides/*.md` | **how to use it** — setup, API, operation and limitations, for someone who wants to use the engine or the database, not to read its code | with the change that alters what a user does or sees |
+| `documentation/faq.md` | **the questions users and reviewers ask**, answered briefly with links to the surface that owns the detail | when an answer changes |
+| `documentation/bug-log.md` | **defects the process caught** — what, how found, the guard now in place | when such a bug is fixed |
 | `package-info.java` | a **package's** purpose, threading model, and entry point | with the package |
 | Javadoc + `// comments` | a **type's** contract and its source citation (N9) | with the type |
 
@@ -81,5 +84,8 @@ A milestone is not done until, in addition to green tests:
 - [ ] the **`architecture/<milestone>-*.md`** as-built explainer exists, with rendered diagrams,
 - [ ] the **changelog entry**, the **README status** and the completion plan's status table are
       updated,
+- [ ] the **user guides** and the **FAQ** say what is now true: new API and options, lifted
+      limitations, answers that no longer say "planned" (each plan's docs step lists them),
+- [ ] any bug that reached a commit before being caught has a **bug-log** entry,
 - [ ] new `package-info` / Javadoc carry their **N9 citations**, and the **glossary** (naming.md §1)
       has any new term.

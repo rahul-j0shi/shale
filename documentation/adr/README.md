@@ -48,7 +48,7 @@ next week, or anything already decided by an existing ADR.
 
 **0003** (the original module layout) was withdrawn when ADR-0013 replaced it. **0012 is
 reserved** for the M5 manifest and recovery decision
-([plan](../roadmap/m5-manifest-and-recovery.md)), and **0014–0022** for the milestones after it;
+([plan](../roadmap/m5-manifest-and-recovery.md)), and **0014–0023** for the milestones after it;
 the [completion plan](../roadmap/completion-plan.md#6-the-decision-records-each-milestone-writes)
 lists which milestone writes which.
 

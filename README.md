@@ -58,6 +58,47 @@ is in the [charter](documentation/roadmap/charter.md).
 
 `./gradlew build crashTest` is green on JDK 25 (161 tests).
 
+## Use it
+
+**Shale is a storage engine, and a storage engine is useful on its own.** It needs no query engine,
+no server and no schema: it is a Java library that stores an ordered map of byte keys to byte
+values in a directory, durably — what LevelDB and RocksDB are. Your program links it in and calls
+`put`, `get`, `delete` and `scan`. A query engine is what a *database* adds on top; ShaleDB is that
+database, and it is one consumer of the engine, not a requirement for using it.
+
+| You want to… | Today | Guide |
+|---|---|---|
+| **Try the engine** in 30 seconds | `jshell` with the engine jar and [`scripts/try-shale.jsh`](scripts/try-shale.jsh) | [Embedding Shale §2](documentation/guides/embedding-shale.md#2-try-it-in-30-seconds-nothing-to-set-up-but-a-jdk) |
+| **Store data from a Java (or Kotlin, Scala) application** | `./gradlew :shale-core:publishToMavenLocal`, then depend on `dev.shale:shale-core` | [Embedding Shale](documentation/guides/embedding-shale.md) |
+| **Use SQL from any language** (`psql`, JDBC, Python) | not yet — ShaleDB's PostgreSQL protocol lands at D5 | planned: `documentation/guides/shaledb-quickstart.md` (D5) |
+| **Read how it works, or ask why** | — | [architecture](documentation/architecture/README.md) · [ADRs](documentation/adr/README.md) · [FAQ](documentation/faq.md) |
+| **Contribute** | the build below | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+Try it now, with nothing installed but `git` and `curl`:
+
+```bash
+git clone https://github.com/rahul-j0shi/shale.git && cd shale
+./scripts/bootstrap.sh && source scripts/env.sh      # a checksum-verified JDK 25 into .tools/
+./gradlew :shale-core:jar
+jshell --class-path shale-core/build/libs/shale-core-0.0.1-SNAPSHOT.jar scripts/try-shale.jsh
+```
+
+In your own code:
+
+```java
+try (Shale db = Shale.open(Path.of("data"), Clock.system(), Metrics.NOOP)) {
+  db.put(key, value, Durability.SYNC);          // returns once the WAL is fsynced
+  byte[] v = db.get(key);                       // null if absent
+  try (Cursor c = db.scan(from, to)) { ... }    // [from, to), in bytewise key order
+}
+```
+
+> **Not production software.** Shale is a study project with serious crash and corruption
+> testing, but no production use. The guide's
+> [limitations table](documentation/guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it)
+> says what is missing today and which milestone adds it — most importantly, until M6 there is no
+> compaction, so disk use only grows.
+
 ## Architecture
 
 ```
@@ -80,7 +121,7 @@ measured) is M8; **v1.0** (the database and demo) is D7. The
 [completion plan](documentation/roadmap/completion-plan.md) has the per-milestone plans,
 estimates and cut lines; the [changelog](CHANGELOG.md) has what shipped.
 
-## Building
+## Building from source
 
 Target JDK **25**, vendored into the repository by the bootstrap script:
 
