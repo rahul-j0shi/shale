@@ -79,7 +79,8 @@ order.
 
 ### 2.4 Row format v1 (the primary index's value)
 
-`formatVersion (1 byte = 1)`, then a null bitmap over the **non-key** columns (⌈n/8⌉ bytes,
+`formatVersion (1 byte = 1)`, then `columnCount` (varint32: how many **non-key** columns the
+table had when the row was written, *n*), then a null bitmap over those *n* columns (⌈n/8⌉ bytes,
 least significant bit first), then each non-null non-key column in schema order:
 
 | Type | Encoding |
@@ -90,6 +91,17 @@ least significant bit first), then each non-null non-key column in schema order:
 
 - **No per-row CRC.** The engine checksums every WAL record and SSTable block that carries a
   row; ADR-0018 records that as the exception to `on-disk-formats.md` §2.
+- **Why `columnCount`: schema evolution without rewriting.** Columns are only ever appended (§2.5),
+  so a row written before `ALTER TABLE … ADD COLUMN` (D2) is simply shorter. When decoding with
+  a descriptor of *m* non-key columns:
+  - columns *n* to *m*−1 read as NULL;
+  - *n* > *m* is `CorruptionException`, since columns are never removed.
+
+  Adding a column is then one descriptor write, however large the table. That is PostgreSQL's
+  design: `natts` in the tuple header, and "missing" attributes read as NULL.
+  - **Cost:** one byte per row below 128 columns.
+  - **Why now:** it is decided in v1 because adding it later would be a format change (N2) that
+    every existing row would need.
 - **Decoding** still validates structure: bitmap size, lengths within the value, no trailing
   bytes. A failure is `CorruptionException` naming the table and key.
 
@@ -103,8 +115,13 @@ least significant bit first), then each non-null non-key column in schema order:
   lowercases unquoted SQL identifiers. Table and index names share one namespace, database-wide,
   as PostgreSQL's relations do. The name entries (`0x01 'N'`) cover both; an index's entry names
   its table.
+- **Column positions** are stable. A table's columns keep their order for its lifetime. New
+  columns are appended, and none is ever dropped or reordered (no `DROP COLUMN`), so a row's
+  *i*-th non-key column always means the same column.
 - **`Catalog`** is an in-memory cache, loaded at open and replaced after each DDL commits. DDL
   runs one at a time, under the database's DDL lock.
+  - **`Catalog.version()`**, a `long` incremented by every DDL, lets D2's prepared statements
+    detect that the schema they were bound against has changed.
 - **Creating an index** (after F1's online schema change, simplified):
   1. one batch writes the descriptor with the index `BACKFILLING`;
   2. batches of 1,000 entries fill it from a snapshot of the table;
@@ -155,6 +172,7 @@ public final class Database implements AutoCloseable {
   public void dropTable(String name);
   public IndexDescriptor createIndex(IndexSpec spec);
   public void dropIndex(String index);                      // names are database-wide
+  public TableDescriptor addColumn(String table, ColumnSpec column);  // nullable only; §2.4
   public VerifyReport verify();                              // §2.8
 }
 public final class Table {                                   // obtained as txn.table(name)
@@ -171,7 +189,13 @@ public final class Table {                                   // obtained as txn.
   of encoded key prefixes, built by `KeyRange.of(...)` from bound `Value`s.
 - **Failures:**
   - a duplicate key → `ConstraintViolationException` (SQLSTATE `23505`);
-  - a NULL in a `NOT NULL` column → SQLSTATE `23502`.
+  - a NULL in a `NOT NULL` column → SQLSTATE `23502`;
+  - an encoded key over 16 KiB or a row over 16 MiB (the engine's limits, M7) → SQLSTATE `54000`
+    (`program_limit_exceeded`), naming the table and the limit.
+- **`addColumn`** writes the new descriptor in one batch: no row is touched.
+  - **A `NOT NULL` column** is rejected with `0A000`: existing rows would violate it, and there are
+    no defaults to fill them.
+  - **A duplicate name** is `42701`.
 - **`DatabaseOptions`** holds the engine's `ShaleOptions`, plus `queryMemoryBytes` for D2
   (default 64 MiB).
 
@@ -239,7 +263,10 @@ public final class Table {                                   // obtained as txn.
 2. `feat(record)`: `RowCodec`.
 3. **Tests:** round-trip property over random schemas and rows; golden `golden/record/v1/row.bin`;
    bit-flip at every offset of the golden (detected, or decodes to a row that the test then
-   rejects — never a crash or an out-of-bounds read); trailing bytes rejected.
+   rejects — never a crash or an out-of-bounds read); trailing bytes rejected;
+   - a row written with *n* columns, decoded against a descriptor of *n* + 2, reads the two new
+     columns as NULL;
+   - `columnCount` greater than the descriptor's → `CorruptionException`.
 
 Commit with `Format-Change: row v1 — new` and `Reversible: no`. **Done when:** green.
 
@@ -274,10 +301,15 @@ Commit with `Format-Change: row v1 — new` and `Reversible: no`. **Done when:**
 **Done when:** green.
 
 ### Step 7 — DDL, index builds and drops, `verify` (`d01/ddl`), ~3 days
-1. `feat(table)`: `createTable`, `dropTable`, `createIndex` (§2.5), `dropIndex`, the open-time
-   recovery of `BACKFILLING` indexes and `G` markers, `verify()`.
-2. **Tests:** `DdlTest` — create index on a filled table then `verify()`; drop then recreate
-   under the same name gets a new id; reopen after a drop leaves no data under the old id.
+1. `feat(table)`: `createTable`, `dropTable`, `createIndex` (§2.5), `dropIndex`, `addColumn`, the
+   open-time recovery of `BACKFILLING` indexes and `G` markers, `verify()`.
+2. **Tests:** `DdlTest`:
+   - create an index on a filled table, then `verify()`;
+   - drop, then recreate under the same name: the new table gets a new id;
+   - reopen after a drop: no data is left under the old id;
+   - `addColumn` on a table of 10,000 rows writes one batch (checked through `WriteResult`).
+     Old rows then read the column as NULL, new rows store it, and an index on the new column
+     can be built and `verify()`s.
 
 **Done when:** green.
 
@@ -317,8 +349,8 @@ Commit with `Format-Change: row v1 — new` and `Reversible: no`. **Done when:**
 
 ## 6. Not in D1
 
-SQL (D2); optimistic concurrency (D4 replaces the writer lock); `ALTER TABLE`; descending
-encodings; range tombstones.
+SQL (D2); optimistic concurrency (D4 replaces the writer lock); `ALTER TABLE` statements (D2 adds
+`ADD COLUMN`; the row format supports it from v1); descending encodings; range tombstones.
 
 ## References
 

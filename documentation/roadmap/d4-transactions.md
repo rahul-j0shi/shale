@@ -224,6 +224,13 @@ deterministically:
   equal engine order.
 - Glossary rows (`ReadSet`, `WriteSet`, commit timestamp, watermark, validation).
 - README status, changelog, the completion plan's status table.
+- `guides/shaledb-sql.md`, a "Transactions" section:
+  - `BEGIN`/`COMMIT`/`ROLLBACK`;
+  - serializable is the only level;
+  - **what `40001` means, and a retry loop to copy**, in Java;
+  - why long transactions abort more often;
+  - DDL blocking writes.
+- The FAQ's isolation answer loses "planned".
 - **Reconciliation pass for D5.** Tag `d4-txn`.
 
 ## 5. Milestone acceptance gates

@@ -172,7 +172,12 @@ binder tests for each, including every error code. **Done when:** green.
    - `architecture/d3-joins-aggregates.md` (join choice, the aggregation pipeline, the `LIKE`
      range with a worked byte example);
    - glossary rows (index nested-loop join, top-N, pushdown);
-   - README status, changelog, the completion plan's status table.
+   - README status, changelog, the completion plan's status table;
+   - `guides/shaledb-sql.md`:
+     - joins, aggregates, `DISTINCT`, `IN`, `BETWEEN` and `LIKE`, each with an example that is
+       also in `guide.slt`;
+     - which queries use an index, and how to see it with `EXPLAIN`;
+     - the differences from PostgreSQL this milestone adds (no hash joins, no subqueries).
 4. **Reconciliation pass for D4.** Tag `d3-query`.
 
 ## 5. Milestone acceptance gates

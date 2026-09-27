@@ -112,6 +112,23 @@ The D2 grammar gains `CHECKPOINT`, PostgreSQL's own command. ShaleDB defines it 
 `engine.flush()` then `engine.compactRange(null, null)` (M6 §2.7). It returns tag `CHECKPOINT`.
 The findings use it to reach a known compacted shape.
 
+### 1.6 `BACKUP TO` — an online backup through SQL
+
+`BACKUP TO 'name'` calls `engine.checkpoint(<backup-dir>/name)` (M8 §2.6) and returns tag `BACKUP`.
+The copy is consistent, taken while the server keeps serving, and is itself a data directory:
+restoring is `bin/shaledb --dir <backup-dir>/name`.
+
+**It is a ShaleDB extension.** PostgreSQL's online backup is `pg_basebackup`, a client of the
+replication protocol, which is out of scope. The guides say so.
+
+**Safety.** The server has no authentication, so a client must not choose where the server writes.
+- The server writes backups only inside `--backup-dir`. Without that flag, `BACKUP` is `0A000`.
+- `name` must match `[a-z0-9_-]{1,63}`, so it cannot contain a path. Anything else is `22023`.
+- An existing name is `42710`.
+
+**Transactions:** inside a transaction block, it is `25001`, as `VACUUM` is in PostgreSQL. A
+checkpoint is not transactional.
+
 ## 2. The findings (the SQL-level measurements)
 
 - **Harness:** in `shale-bench`, a `SqlStore` interface with two embedded implementations:
@@ -144,8 +161,12 @@ The findings use it to reach a known compacted shape.
 5. Two headline charts: one from M8, one from F1–F5.
 6. The verification story: crash tests at every byte and file operation, the model tests, the
    SQL logic and differential tests, the serializability checker, the real `kill -9`.
-7. The status, and the docs map.
-8. **A build note:** how the project was built, including the AI assistance. The project's claim
+7. **"Use it": three doors**, each one command and one link:
+   - **try the demo:** `scripts/demo.sh`;
+   - **use the database** from any PostgreSQL client: `guides/shaledb-quickstart.md`;
+   - **embed the engine** in a JVM application: `guides/embedding-shale.md`.
+8. The status, and the docs map (with the FAQ).
+9. **A build note:** how the project was built, including the AI assistance. The project's claim
    is understanding, so saying how it was built strengthens it.
 
 ### 3.2 Write-ups (`documentation/writeups/`, each ≤ 1,500 words, with diagrams)
@@ -153,6 +174,16 @@ The findings use it to reach a known compacted shape.
 - "What an INSERT costs on an LSM, measured" (F1, F4, the cost notices).
 - "Testing crash consistency at every byte and every file operation" (M1, M5, D5).
 - "SQL on a key-value engine: encoding, planning, and serializable OCC" (D1–D4).
+- **The retrospective** (`documentation/retrospective.md`), written last and honestly:
+  - what was hardest, and why;
+  - which estimates were wrong, from the completion plan's actual-vs-estimate column;
+  - the bugs that mattered, from the bug log;
+  - which decisions held up, and which would change with hindsight, each naming its ADR;
+  - what would come next with more time: the scale-out sketch (Raft over `WriteBatch`, range
+    splits), a block cache, compression.
+
+  **Why:** it answers the question every interviewer asks — "what would you do differently?" —
+  with evidence rather than improvisation. The FAQ's last answer links to it.
 
 ### 3.3 The tour (`documentation/tour.md`)
 
@@ -163,12 +194,30 @@ One `INSERT` and one `SELECT` followed from the wire protocol to the fsync and b
 
 - `.github/workflows/build.yml` triggers on the tags `v*` and `shale-*` as well as `m*`.
 - Tag `v1.0`. A GitHub release lists what is built, measured and verified, and links the reports.
+- **Attached to the release:**
+  - `shaledb-1.0.0.zip` (`distZip`: `bin/shaledb` and its jars), so the database runs with only a
+    JRE;
+  - `shale-core-1.0.0.jar` and its sources jar.
+- **A published Docker image** needs a registry account. That is the owner's decision; the
+  `Dockerfile` builds locally either way.
 
 ## 4. Steps
 
-### Step 1 — `CHECKPOINT` (`d07/checkpoint`), ~1 day
-`feat(sql)`: grammar and execution. `checkpoint.slt`: after `CHECKPOINT`, `shale_levels` shows one
-populated level and zero debt. **Done when:** green.
+### Step 1 — `CHECKPOINT` and `BACKUP TO` (`d07/checkpoint`), ~2 days
+1. `feat(sql)`: grammar and execution of both; `Database.checkpoint(Path)`; the server's
+   `--backup-dir`.
+2. **Tests:**
+   - `checkpoint.slt`: after `CHECKPOINT`, `shale_levels` shows one populated level and zero debt.
+   - `BackupTest`, through pgjdbc against an in-process server:
+     - a backup taken while another connection inserts opens as a consistent database, and
+       `verify()` is clean;
+     - no `--backup-dir` → `0A000`;
+     - `'../x'` → `22023`;
+     - an existing name → `42710`;
+     - inside `BEGIN` → `25001`.
+3. `docs(guides)`: backup and restore in `shaledb-quickstart.md`; `BACKUP TO` in `shaledb-sql.md`.
+
+**Done when:** green.
 
 ### Step 2 — the module and the backend (`d07/backend`), ~4 days
 1. `build(demo)`: the module (pgjdbc runtime; the `bannedJdkApis` suppression; the
@@ -201,15 +250,21 @@ seeds locally, and in CI.
 **Done when:** each finding has a chart, its environment, its reproduction command and a
 one-sentence answer.
 
-### Step 6 — the README, write-ups and tour (`d07/launch-docs`), ~4 days
-§3.1–§3.3. **Done when:** every README claim links to its evidence — a test, a chart or an ADR —
-and every link resolves.
+### Step 6 — the README, write-ups, tour and retrospective (`d07/launch-docs`), ~5 days
+§3.1–§3.3, and a final pass over the FAQ and every guide, so that no answer still says "planned"
+for something that shipped. **Done when:** every README claim links to its evidence — a test, a
+chart or an ADR — and every link resolves.
 
 ### Step 7 — the fresh-clone check (`d07/fresh-clone`), ~1 day
 On a clean Linux machine and a clean macOS machine (or container):
 - `git clone`, then `scripts/demo.sh`, reaching a working app in under five minutes with only JDK
   25 installed;
-- then `docker compose up`, with only Docker installed.
+- then `docker compose up`, with only Docker installed;
+- then each guide followed literally, as a new user would:
+  - `embedding-shale.md` §2–§4;
+  - `shaledb-quickstart.md`: `psql`, JDBC and Python.
+
+  Every command must work as written; any that does not is fixed in the guide or the code.
 
 Record both in the release notes. **Done when:** both pass.
 

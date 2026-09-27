@@ -186,7 +186,12 @@ tiny sizes, fixed seed):
      every counter marked where it is incremented (`file:line`);
    - glossary rows (statement cost, cost notice, system table);
    - README: the `EXPLAIN ANALYZE` example becomes the front-page demo;
-   - changelog; the completion plan's status table.
+   - changelog; the completion plan's status table;
+   - `guides/shaledb-sql.md`, a "Seeing what a statement cost" section:
+     - how to read `EXPLAIN ANALYZE`, line by line;
+     - cost notices, and how to turn them on;
+     - the system tables, with a query for each;
+   - the FAQ's cost answer loses "planned".
 3. **Reconciliation pass for D7.** Tag `d6-cost`.
 
 ## 5. Milestone acceptance gates
