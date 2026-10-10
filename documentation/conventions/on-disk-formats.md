@@ -49,9 +49,15 @@ Example:
 - **Every block, record, and page carries a checksum** (CRC32C) over its own bytes,
   verified on every read unless verification is explicitly disabled by configuration.
   Never trust a length field before its checksum has passed — a corrupt length read as
-  a trusted allocation size is how a corrupt file becomes an OOM or a JVM crash.
+  a trusted allocation size is how a corrupt file becomes an OOM or a JVM crash. **Using
+  a field to classify** counts as trusting it: a recovery decision such as "this record
+  is a torn tail" may rest only on bytes a checksum has already verified. WAL v1 broke
+  this rule, and one flipped length bit silently lost acknowledged writes (ADR-0024).
 - **Lengths precede payloads**, and a length is bounds-checked against the remaining
   extent of the containing block before use. Every time. No exceptions for hot paths.
+  Decode it wide, check it against the format's width and the remaining extent *by
+  subtraction*, and only then narrow it to an `int` (ADR-0024 §6). A record is consumed
+  exactly; trailing bytes are corruption unless a version defines them.
 - **No padding without a stated purpose**, and padding bytes are always zero and always
   verified as zero on read, so that a future field can be added there detectably.
 - **Reserved fields are written as zero and rejected if non-zero.** This is what makes
@@ -80,9 +86,12 @@ The full procedure, all steps required:
    mechanism that actually prevents accidental breakage; a checklist will not.
 6. **Add a round-trip property test** — encode arbitrary valid inputs, decode, assert
    equality, with jqwik generating the inputs.
-7. **Add a corruption test** — flip a bit at every offset in a small instance and
-   assert every case is either detected or provably harmless. Bit-flip-at-every-offset
-   is cheap for small structures and finds unchecked length fields immediately.
+7. **Add a corruption test** — flip every **bit** of a small instance and assert every
+   case is either detected or provably harmless (the decoded contents equal the
+   original's). A flip must never be classified as a torn tail. Add malformed-structure
+   fixtures too: fields changed *with* their checksums recomputed, which reach the
+   structural checks a bit flip cannot. Both are cheap for small structures and find
+   unchecked length fields immediately.
 8. **Commit with a `Format-Change:` trailer** and `Reversible: no`.
 
 Skipping step 5 or step 8 is the most serious process violation in this repository,

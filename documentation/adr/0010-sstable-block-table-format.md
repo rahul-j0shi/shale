@@ -1,6 +1,6 @@
 # 0010. SSTable on-disk format: a LevelDB block table, uncompressed
 
-- **Status:** Accepted
+- **Status:** Accepted — read-side validation tightened by [ADR-0024](0024-recovery-integrity-boundaries.md) §6; the bytes are unchanged
 - **Date:** 2026-08-03
 - **Milestone:** M3
 - **Reversible:** **no** — this is an on-disk format (on-disk-formats.md §3). Files written by this

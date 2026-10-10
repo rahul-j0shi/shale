@@ -7,12 +7,68 @@ project than a list of features.
 
 **Rules for an entry:**
 - **When:** a defect reached `main`, or reached a commit on a milestone branch, before it was
-  found.
+  found. Until it is fixed it is a row in [Open defects](#open-defects), so a known defect is
+  never only in someone's notes.
 - **What it says:** what was wrong, the consequence it would have had, how it was found, and the
   guard that now exists.
 - **Where it links:** the fixing commit.
 
 Newest first.
+
+## Open defects
+
+Defects known to be on `main` and not yet fixed. Each row says what the defect is, how it was
+shown, and the plan step that fixes it. When the fix lands, its row is replaced by a full entry
+below, giving: the finding, the fixing commit, the regression command and its output, and the
+limitation that remains.
+
+These came from an external engineering review of `main` at `c66adea` (five rounds, 2026-10-08/09).
+Its findings are numbered SH-01 to SH-18. Measurements and presentation findings are not defects;
+the [completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)
+gives every finding's owner.
+
+**Why the process missed them.**
+- **SH-08 and SH-18:** `wal/format.md` claimed a bit-flip test at every offset for the WAL; none
+  existed (`on-disk-formats.md` §3 step 7 was never met for the WAL).
+- **SH-13 to SH-16:** the other decoders were tested with round trips and payload byte flips,
+  which cannot reach structural branches.
+
+| Id | Defect | Shown by | Fixed in |
+|---|---|---|---|
+| SH-18 | **Silent loss.** One bit in a WAL fragment's length (16 → 16,400) makes the reader call a damaged header a torn tail before any CRC can be checked. `open` succeeds without the two acknowledged `SYNC` writes and deletes the WAL. A real one-byte truncation of the same file keeps one record. | fixture: two `SYNC` puts, byte 21 XOR `0x40` | [M4.5](roadmap/m4-5-integrity-boundaries.md) Steps 4–5 (ADR-0024) |
+| SH-08 | **Silent loss.** A `FULL` → `ZERO` type bit makes the reader skip the block as padding before any CRC check. `open` succeeds empty and deletes the WAL. | fixture: byte 22, bit 0 | M4.5 Steps 3–4 |
+| SH-01 | After a failed flush the engine keeps accepting writes. The failed flush's memtable drops out of the read view, and after reopen `get` returns an old value while `scan` returns the new one. Shown only by ignoring the guide's "reopen after `StorageException`"; nothing enforces that advice. | a directory placed at the next table's path; a retried write | [M5](roadmap/m5-manifest-and-recovery.md) §2.6, Step 7 |
+| SH-04 | `SYNC` was documented as power-loss durable, but no directory entry is ever synced: not a new segment's, not a flushed table's. Source finding; no power-loss reproduction. | `WalWriter.open`, `Shale.flushToSSTable` | M5 Steps 4 and 8 |
+| SH-09 | Files are written as `%06d` but discovered as exactly six digits: past number 999,999, the second reopen ignores the newer files and loses data. | `000001.wal` renamed to `999999.wal`, reopened twice | M5 Step 4 |
+| SH-02 | A failed `open` leaks the table handles it opened before failing: ten retries left ten handles. | one valid table, then a corrupt one | M5 Step 7 |
+| SH-10 | A cursor whose construction throws keeps its table references: one handle survived ten failed scans and `close()`. | a data block damaged under a running engine | M5 Step 7 |
+| SH-11 | A 10-byte varint whose last byte overflows 64 bits decodes as 0. | `[0x80 ×9, 0x02]` | M4.5 Step 3 |
+| SH-13 | A WAL key length of 2^32 + 9 is narrowed to 9 and accepted. | a hand-built record | M4.5 Step 3 |
+| SH-14 | A 24-byte block claims 1,073,741,825 restart points; the offset arithmetic overflows and the block parses. | restart count `0x40000001` | M4.5 Step 6 |
+| SH-15 | A footer whose index handle points at the (valid, empty) metaindex is accepted; the reopened table exposes no data. A crafted multi-field rewrite, not a one-bit fault. | footer re-encoded with CRCs intact | M4.5 Step 6 |
+| SH-16 | Malformed handle sizes escape as `ArrayIndexOutOfBoundsException` or `ArithmeticException` instead of `CorruptionException` (N4). | index size −1, and 2^32 | M4.5 Step 6 |
+
+## B4 — A guide that promised more than the engine kept (M4)
+
+**What was wrong.** User-facing docs claimed more than the tests established:
+- **SH-03.** The embedding guide said a cursor sees the database "as it was when opened". A cursor
+  pins its tables, but it reads the live memtable, and a key inserted after it opens can appear
+  in it.
+- **SH-04.** `SYNC` was called power-loss durable without qualification.
+- **SH-05.** The README, the FAQ and `wal/format.md` said every corruption is detected; the WAL had
+  no bit-flip test at all.
+- **SH-06.** The README led with SQL and a PostgreSQL protocol that do not exist yet.
+
+**Consequence.** A user relying on cursor snapshots, or on `SYNC` across power loss, would have
+been wrong without any test failing.
+
+**Found by** the external review above, which reproduced the cursor behaviour.
+
+**Guard:** every guarantee now names its failure model (ADR-0024 §7), and each milestone's docs
+step re-checks the guide, FAQ and README against the tests it names.
+
+**Fix:** the documentation change that added this entry. The Javadoc follows in M4.5 Step 1, and
+the behaviour itself in M7 (snapshots) and M5 (directory syncs).
 
 ---
 

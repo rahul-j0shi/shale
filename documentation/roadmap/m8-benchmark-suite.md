@@ -115,10 +115,22 @@ as a benchmark-only baseline. **Estimate:** 3–4 focused weeks, in 8 steps.
 | E5 | `readwhilewriting`, 5 minutes | p99 / p99.9 read latency over time, with compaction debt on the same time axis |
 | E6 | Shale vs RocksDB, on `fillrandom`, `readrandom`, `readmissing` | throughput and amplification side by side, and the mechanisms behind the gap |
 | E7 | E5 under G1 (the default) and generational ZGC (`-XX:+UseZGC`), with `-Xlog:gc` | how much of the tail latency is the garbage collector: p99 and p99.9 beside the total and longest GC pauses |
+| E8 | Restart after a crash with 1 segment, and with the maximum number of segments M5.5's immutable bound allows, each at 100-byte and 1 MiB values | the recovery budget (SH-12): bytes and files replayed, entries replayed, peak heap during `open`, and time to the first accepted write |
 
 **Why E7.** "It's Java — what about GC pauses?" is the first question anyone asks of a JVM storage
 engine. E7 answers it with a number, not an opinion. It costs one extra run of an existing
 workload.
+
+**Why E8.** Recovery reads each WAL segment whole and replays every segment into one memtable
+before it flushes (M5 §2.3 steps 5–6). In normal operation the write buffer and the immutable
+bound limit what there is to replay, so no out-of-memory problem has been shown. E8 measures it,
+and the report ends the experiment with one recorded decision:
+- **retain** the design, with the measured bound written into the operating guide;
+- **change** to a streaming reader and bounded recovery flushes, as a separate, planned step. It
+  must keep the sequence order that reads rely on, so an older version can never win;
+- **defer**, with the reason.
+
+The experiment is done when the decision is recorded. No improvement is required.
 
 ### 2.6 Online checkpoint (ADR-0023, after RocksDB's `Checkpoint`)
 
@@ -221,7 +233,7 @@ section, stub only. **Done when:** merged.
 **Done when:** `scripts/bench.sh quick --store rocksdb` runs, and `build` stays green.
 
 ### Step 5 — the experiments and the report (`m08/report`), ~4 days
-1. Run E1–E7 on the `full` preset, 3 runs per point.
+1. Run E1–E8 on the `full` preset, 3 runs per point.
 2. `docs(bench)`: `documentation/benchmarks/engine.md`:
    - the method and environment;
    - one Mermaid `xychart-beta` chart per experiment, each validated with mermaid-cli;
@@ -306,7 +318,8 @@ published jar.
 
 ## 5. Milestone acceptance gates
 
-- E1–E7 each have a chart, the environment and a reproduction command.
+- E1–E8 each have a chart, the environment and a reproduction command; E8 also has its
+  retain/change/defer decision (SH-12 closes there).
 - A checkpoint is consistent, and crash-safe at every file operation (`crashTest`).
 - The operating guide exists, and every snippet in both guides compiles against the released jar.
 - Reproducible: two `full` runs agree within the spread the report states.

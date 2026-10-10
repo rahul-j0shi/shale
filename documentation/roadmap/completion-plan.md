@@ -1,8 +1,9 @@
 # Completion plan — from M4 to ShaleDB v1.0
 
 **Status:** the working plan of record (2026-09-26; every milestone plan critiqued and rewritten
-to implementation level on 2026-09-27). **Starts from:** `main` at `9cfa7d6`:
-M0–M4 complete, `./gradlew build crashTest` green on JDK 25 (161 tests). **Why and what:** the
+to implementation level on 2026-09-27; **M4.5 inserted and M5–M8 amended on 2026-10-10** after the
+October 2026 engineering review, §11). **Starts from:** `main` at `c66adea`: M0–M4 complete,
+`./gradlew build crashTest` green on JDK 25 (161 tests). **Why and what:** the
 [charter](charter.md) and [ADR-0013](../adr/0013-shaledb-see-through-database.md).
 
 This page orders everything left to build. Pick up the first milestone in §10 that is not ✅ and
@@ -25,11 +26,14 @@ losing an acknowledged commit.*
 
 | Phase | Milestones | Ends with |
 |---|---|---|
-| **Engine** | M5, M5.5, M6, M7, M8 | **Shale 1.0** — a complete, measured LSM engine (tag `shale-1.0`) |
+| **Engine** | M4.5, M5, M5.5, M6, M7, M8 | **Shale 1.0** — a complete, measured LSM engine (tag `shale-1.0`) |
 | **Database** | D1–D7 | **ShaleDB v1.0** — SQL, transactions, the PostgreSQL protocol, cost accounting and the demo (tag `v1.0`) |
 
 **Portfolio checkpoints.** Each is a finished, honest artifact if work stops there; update the
 README to match at each:
+- after **M4.5** — the recovery case study: two one-bit header faults that silently lost
+  acknowledged writes, the invariant they broke, the format decision, and the regressions and
+  limits (a smaller scope than Shale 1.0, and named as such);
 - after **M6** — an LSM engine with compaction;
 - after **M8** — Shale 1.0, measured against RocksDB;
 - after **D5** — a SQL database `psql` connects to;
@@ -40,7 +44,7 @@ README to match at each:
 ```mermaid
 flowchart LR
   subgraph engine["Engine → Shale 1.0"]
-    m5["M5<br/>manifest"] --> m55["M5.5<br/>write path"] --> m6["M6<br/>compaction"] --> m7["M7<br/>batches · snapshots · bloom"] --> m8["M8<br/>benchmarks"]
+    m45["M4.5<br/>integrity"] --> m5["M5<br/>manifest"] --> m55["M5.5<br/>write path"] --> m6["M6<br/>compaction"] --> m7["M7<br/>batches · snapshots · bloom"] --> m8["M8<br/>benchmarks"]
   end
   subgraph database["Database → v1.0"]
     d1["D1<br/>record layer"] --> d2["D2<br/>SQL"] --> d3["D3<br/>joins · aggregates"] --> d4["D4<br/>transactions"] --> d5["D5<br/>PostgreSQL protocol"] --> d6["D6<br/>cost accounting"] --> d7["D7<br/>demo · findings · launch"]
@@ -59,7 +63,8 @@ ADR-0013 records it and why.
 
 | Step | Why it is in the plan |
 |---|---|
-| **M5** manifest | Without durable metadata no file can be deleted safely, so compaction is impossible. It also closes the known lifecycle gaps: operations after `close`, the six-digit file-number limit, no directory fsync. |
+| **M4.5** integrity boundaries | Two reproduced one-bit WAL header faults make recovery succeed with every acknowledged write gone; the claim "durable" is false until they fail loudly. It precedes M5 because M5's manifest reuses the WAL framing, which must be trustworthy first (ADR-0024). |
+| **M5** manifest | Without durable metadata no file can be deleted safely, so compaction is impossible. It also closes the known lifecycle gaps: operations after `close`, the failed state after an I/O error, handles leaked by a failed `open` or cursor, the six-digit file-number limit, no directory fsync. |
 | **M5.5** write path | A dedicated WAL-writer thread gives group commit, and a submission that never does I/O in the caller's thread, which D4's commit protocol needs. Background flush and write stalls are prerequisites for compaction. The shared fsync is what `EXPLAIN ANALYZE` shows as "shared(*N*)". |
 | **M6** compaction | What makes this an LSM engine, and the source of the deferred costs the thesis is about. Leveled first; size-tiered (RocksDB-universal style, which keeps runs in age order) second, so the tradeoff can be measured (E1, F3). |
 | **M7** batches, snapshots, bloom, statistics | Atomic batches and snapshots are what a relational layer's correctness rests on. Bloom filters make the duplicate-key check of every `INSERT` cheap. Per-operation statistics are the hook cost accounting needs. |
@@ -79,10 +84,11 @@ estimate of 3–6, so recalibrate after M5 (§10).
 
 | Id | Milestone | Plan | ADR | Format change (N2) | New module | Est. | Tag |
 |---|---|---|---|---|---|---|---|
-| M5 | Manifest + recovery | [plan](m5-manifest-and-recovery.md) | 0012 | manifest v1 | — | 3–4 | `m5-manifest` |
+| M4.5 | Integrity boundaries | [plan](m4-5-integrity-boundaries.md) | 0024 | WAL v2 (header CRC) | — | 2–3 | `m4.5-integrity` |
+| M5 | Manifest + recovery | [plan](m5-manifest-and-recovery.md) | 0012 | manifest v1 (on log framing v2) | — | 3–4 | `m5-manifest` |
 | M5.5 | Concurrent write path | [plan](m5-5-concurrent-write-path.md) | 0014 | — | — | 2–3 | `m5.5-write-path` |
 | M6 | Compaction | [plan](m6-compaction.md) | 0015 | — (M5 defined levels and tag 5) | — | 4–6 | `m6-compaction` |
-| M7 | Batches, snapshots, bloom, statistics | [plan](m7-batches-snapshots-bloom.md) | 0016, 0017 | WAL v2, SSTable v2 | — | 3–4 | `m7-mvcc-bloom` |
+| M7 | Batches, snapshots, bloom, statistics | [plan](m7-batches-snapshots-bloom.md) | 0016, 0017 | WAL v3, SSTable v2 | — | 3–4 | `m7-mvcc-bloom` |
 | M8 | Engine benchmarks, checkpoint, Shale 1.0 | [plan](m8-benchmark-suite.md) | 0023 | — | — | 3–4 | `shale-1.0` |
 | D1 | Record layer | [plan](d1-record-layer.md) | 0018 | key + row v1 | `shale-db` | 2–3 | `d1-record` |
 | D2 | SQL + single-table execution | [plan](d2-sql-and-execution.md) | 0019 | — | — | 3–4 | `d2-sql` |
@@ -92,8 +98,8 @@ estimate of 3–6, so recalibrate after M5 (§10).
 | D6 | Cost accounting | [plan](d6-cost-accounting.md) | 0022 | — | — | 2 | `d6-cost` |
 | D7 | Demo, findings, launch | [plan](d7-demo-and-launch.md) | — | — | `shale-demo` | 3–4 | **`v1.0`** |
 
-**Totals:** engine ≈ 15–21 weeks, database ≈ 16–22 → **v1.0 ≈ 31–43 focused weeks** on these
-estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken: ≈ 26–37.
+**Totals:** engine ≈ 17–24 weeks, database ≈ 16–22 → **v1.0 ≈ 33–46 focused weeks** on these
+estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken: ≈ 28–40.
 
 ## 5. How to execute any milestone
 
@@ -133,10 +139,11 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 
 | ADR | Milestone | Records |
 |---|---|---|
+| 0024 | M4.5 | log framing v2 (header CRC); the tail classification table; v1's unverifiable-tail rule; sync at switch; the decoder contract; guarantees per failure model — **already `Accepted`** (written with this plan) |
 | 0012 | M5 | manifest format (with per-file sequence ranges); open and flush order; `Version` ownership; failed state and close; the public `Env` SPI; `ShaleOptions` |
 | 0014 | M5.5 | a dedicated WAL-writer thread (amends ADR-0008's leader/follower); watermarks; fail-stop on fsync error; background flush and stalls; `GROUP` as an alias of `SYNC` |
 | 0015 | M6 | leveled first, then RocksDB-universal-style tiered; level invariants; point-lookup order; `flush`/`compactRange`; compaction debt |
-| 0016 | M7 (1) | `WriteBatch`, `writeAsync`, `Snapshot`, `ReadOptions`, `OperationStats`; key and value size limits; WAL v2 |
+| 0016 | M7 (1) | `WriteBatch`, `writeAsync`, `Snapshot`, `ReadOptions`, `OperationStats`; key and value size limits; WAL v3 |
 | 0017 | M7 (2) | whole-table bloom filter, double hashing, 10 bits/key; SSTable v2 |
 | 0018 | D1 | order-preserving key encoding; keyspaces; row format (with a column count, for `ADD COLUMN`); catalog; index states |
 | 0019 | D2 | the frozen SQL subset; strict types; three-valued logic; rule-based planner |
@@ -146,6 +153,8 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 | 0023 | M8 | the online checkpoint: flush, pin a `Version`, hard-link, commit by directory rename; `Env.link` |
 
 **Public API changes to `shale-core`** (each in its ADR, with a `Reversible:` trailer):
+- M4.5: none. Behaviour: an unverifiable v1 WAL tail fails `open`, and a segment is synced
+  when it is closed.
 - M5: `ShaleOptions`; the `Env` SPI (`dev.shale.env`); `open(…, Env)`; closed-state and
   repeated-close semantics.
 - M5.5: `ShaleOptions` fields; `Durability.GROUP` documented as an alias.
@@ -155,6 +164,8 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 - M8: `checkpoint(Path)`; `Env.link`; version `1.0.0` and the compatibility policy.
 
 **Test tiers come alive:**
+- M4.5: the log-framing matrices — every header bit, every truncation offset, zero-filled tails —
+  and bit-flip at every bit for the WAL and SSTables;
 - M5: `FaultInjectionEnv` — a crash and simulated power loss at every file operation;
 - M6: soak;
 - D2: SQL logic tests and differential queries;
@@ -194,13 +205,15 @@ phase first: after M7, go to D1–D6, then M8, then D7 (D7 needs M8's report).
 4. the demo's engine panel (keep the cost drawer: it is the thesis);
 5. one of the three write-ups.
 
-**Never cut:** M5, M6's leveled compaction, M7, D4's serializable commit, D5, D6, or the crash
+**Never cut:** M4.5, M5, M6's leveled compaction, M7, D4's serializable commit, D5, D6, or the crash
 demonstrations. They are the claim.
 
 ## 9. Risks
 
 | Risk | Guard |
 |---|---|
+| A decoder or recovery path trusts an unverified field (the class of SH-08, SH-18) | ADR-0024 §6's decoder contract; bit-flip at every bit of every new format; a malformed-structure fixture for every structural field |
+| Docs claim a guarantee the tests do not cover | every claim names its failure model (ADR-0024 §7); a milestone's docs step re-checks the guide, FAQ and README against its tests |
 | Compaction and flush races corrupt the file set | M5's simulated-filesystem crash tests and M6's crash-at-every-operation gates; soak runs before tags |
 | SQL scope creep | each D-plan freezes its grammar; anything else is written down, not built |
 | PostgreSQL protocol surface creep (drivers probing `pg_catalog`) | D5's subset is frozen; the demo uses only pgjdbc features the conformance suite covers |
@@ -214,6 +227,56 @@ demonstrations. They are the claim.
 | Id | Status | Estimate (weeks) | Actual | Notes |
 |---|---|---|---|---|
 | M0–M4 | ✅ | 3–6 | ~2.5 | tag `m4-merge`; see the [changelog](../../CHANGELOG.md) |
-| M5 | ⏭ next | 3–4 | | write ADR-0012 first |
+| M4.5 | ⏭ next | 2–3 | | ADR-0024 already accepted; start at Step 1 |
+| M5 | ☐ | 3–4 | | write ADR-0012 first |
 | M5.5 · M6 · M7 · M8 | ☐ | 12–17 | | |
 | D1–D7 | ☐ | 16–22 | | |
+
+## 11. The October 2026 engineering review: where each finding is closed
+
+An external review of `main` at `c66adea` (five rounds, 2026-10-08/09) recorded 18 findings,
+`SH-01` to `SH-18`. They are defects, unproven guarantees, measurements and presentation issues;
+**the count is not a bug count**. Each finding has exactly one owner below, so none is open
+without a place to close it. The reproduced defects' evidence is kept in the bug log's
+[open-defect register](../bug-log.md#open-defects).
+
+| Id | Kind | Finding, in brief | Closed by |
+|---|---|---|---|
+| SH-01 | defect | writes accepted after a failed flush; `get` and `scan` then disagree after reopen | M5 §2.6 failed state, regression in M5 Step 7 |
+| SH-02 | defect | a failed `open` leaks the table handles it already opened | M5 §2.3 open rollback, Step 7 |
+| SH-03 | wrong claim | the guide promised cursor snapshots | claim corrected in docs (2026-10-10) and Javadoc (M4.5 Step 1); real snapshots M7 Step 4 |
+| SH-04 | wrong claim + gap | `SYNC` called power-loss safe without directory syncs | claim corrected in docs (2026-10-10); directory syncs M5 Step 4; simulated in M5 Step 8 |
+| SH-05 | test gap | tests cover narrower failures than the claims (and the WAL had no bit-flip test) | M4.5 Steps 4–5 (framing matrices); M5 Step 8 (composed failure histories, metamorphic runs) |
+| SH-06 | presentation | the README led with planned SQL; the charter overstated "only owners can attribute cost"; a CockroachDB example used RocksDB, not Pebble | corrected in docs (2026-10-10) |
+| SH-07 | measurement | restart, read fan-out, narrow-scan allocation and flush-tail costs are unmeasured | M5.5 Step 2 (baseline); M8 E5, E8 |
+| SH-08 | **P0 defect** | `FULL`→`ZERO` bit: open succeeds empty and deletes the WAL | M4.5 Step 3 (v1 rule), Step 4 (v2 header CRC) |
+| SH-09 | defect | seven-digit file names written but never read back | M5 Step 4 (numeric names, rollover regression) |
+| SH-10 | defect | a cursor whose construction fails keeps its table pins | M5 Step 7 (adopted-Version rollback, regression) |
+| SH-11 | defect | an overflowing 10-byte varint decodes as 0 | M4.5 Step 3 |
+| SH-12 | measurement | recovery replays every WAL into one memtable; no memory budget | M8 E8 (measure, then retain, change or defer) |
+| SH-13 | defect | a 2^32 + 9 key length narrows to 9 | M4.5 Step 3 |
+| SH-14 | defect | a restart count overflows the offset arithmetic | M4.5 Step 6 |
+| SH-15 | defect | a footer can alias the metaindex as the index | M4.5 Step 6 |
+| SH-16 | defect | bad handle sizes escape as `ArithmeticException` or `ArrayIndexOutOfBoundsException` | M4.5 Step 6 |
+| SH-17 | measurement | an empty scan or a missing key reads one block per table | M5.5 Step 2 (baseline counts); M6 Step 2 (range selection for `get` *and* `scan`); M7 Step 5 (counters) |
+| SH-18 | **P0 defect** | a length bit makes a damaged header look like a torn tail: open succeeds empty and deletes the WAL | M4.5 Steps 4–5 (ADR-0024) |
+
+**How a finding's status changes.** It moves only with evidence, in this form: *work step →
+finding ids → commit → command and its output → remaining limitation*.
+- "Fixed" means the behaviour changed and the named regression passes.
+- A decision or a measurement is "decided" or "measured", never "fixed".
+- A finding closes in the bug log (defects) or in its milestone's changelog entry (measurements),
+  and its row here gets the commit.
+
+**Two levels of completion.** A step is done when its named regressions and controls pass and
+its limits are written down. A milestone is done only by its acceptance gates. Closing a finding
+does not accept its milestone, and a milestone's tag does not close a finding that its tests do
+not name.
+
+**What the review recommended that this plan does not adopt, and why:**
+- **A replacement engine (RocksDB) or a copied format** (SQLite's WAL). The mechanisms are the
+  point (N1); those systems are references.
+- **Coverage-guided fuzzing (Jazzer)** — deferred. It would need an ADR for the test-dependency
+  allowlist, and the deterministic fixtures come first.
+- **Broader fault histories than the M5 crash matrix and the M6 soak.** Those two are the plan;
+  any new requirement must name the invariant it serves and the step it extends.

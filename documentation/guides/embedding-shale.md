@@ -10,7 +10,8 @@ it says which.
 
 > **Is it production-ready?** No. Shale is a learning and portfolio project, with serious testing
 > but no production use. Use it to learn, to experiment, or to read. Do not store data you cannot
-> afford to lose.
+> afford to lose. **Read §10 first:** it lists known defects, including two one-bit WAL faults that
+> can silently lose acknowledged writes, and the milestone that fixes each.
 
 ---
 
@@ -103,31 +104,44 @@ Every write names its guarantee; there is no default to forget.
 | Mode | Returns after | Survives a process crash | Survives power loss |
 |---|---|---|---|
 | `NONE` | the write is in the OS page cache | yes | **no** — the last writes can be lost |
-| `SYNC` | the write-ahead log is fsynced | yes | yes |
-| `GROUP` | same as `SYNC` today; M5.5 shares one fsync across concurrent writers | yes | yes |
+| `SYNC` | the write-ahead log record is fsynced | yes | **not yet guaranteed** — see below |
+| `GROUP` | same as `SYNC` today; M5.5 shares one fsync across concurrent writers | yes | as `SYNC` |
 
-**How these claims are tested:**
-- recovery is run from a write-ahead log truncated at **every byte offset**, and must return
-  exactly the complete records;
-- every SSTable is corrupted at **every byte offset**, and each corruption must be detected;
-- a model test runs thousands of random operations with restarts against a `TreeMap`.
+**Why `SYNC` is not yet power-loss safe.** The record's bytes are forced to disk, but the
+*directory entry* of a newly created WAL segment, and of a newly flushed SSTable, is never
+synced. After a power loss shortly after a memtable switch or a flush, the file holding an
+acknowledged write may be gone. M5 adds the directory syncs and tests them under simulated power
+loss. Until then, `SYNC` is durable against process crashes, and against power loss only for
+writes in a segment whose directory entry has already reached the disk on its own.
 
-From M5, a fault-injection filesystem also simulates power loss at every file operation.
+**What each claim is tested against.** A result in one row says nothing about another:
+
+| Failure model | What it means | Covered today by |
+|---|---|---|
+| Clean restart | `close()`, then `open` | the model test: thousands of random operations with restarts, against a `TreeMap` |
+| Torn tail | the log ends mid-append | `ShaleCrashTest`: the WAL truncated at every byte offset, recovering exactly the complete records |
+| Process death | `kill -9`; the OS page cache survives | the truncation test above; a real child-process kill arrives at D5 |
+| Malformed bytes | a file changed after it was written | SSTables: every byte flipped, and each case detected or proven harmless. **The WAL has no such test yet, and two one-bit header faults go undetected (§10)** — M4.5 |
+| Simulated power loss | unsynced data and directory entries vanish | nothing yet — M5's fault-injection filesystem |
+| Physical power loss | a real machine loses power | never tested; argued from fsync ordering |
 
 ## 6. Threading
 
 - **`Shale`** is thread-safe. Writes are serialised internally; reads never block and never take
   a lock.
 - **A `Cursor`** belongs to the thread that opened it.
-- **A cursor sees a stable view** of the database as it was when opened, including across
-  flushes.
+- **A cursor is weakly consistent.** It keeps the tables it reads open (pinned) for its whole
+  life, so a flush never pulls data out from under it, and it never returns a partial record. But
+  it reads the live memtable, so a write made *after* the cursor opened may or may not appear in
+  it. It is not a snapshot. From M7 a cursor reads at the sequence number current when it was
+  opened, which is a true snapshot.
 
 ## 7. Errors
 
 | Exception (all unchecked) | Means | What to do |
 |---|---|---|
-| `CorruptionException` | bytes on disk are wrong (a checksum mismatch, a bad structure) | stop, and keep the directory for inspection. Shale never "repairs" silently |
-| `StorageException` | the environment failed: I/O error, disk full, permissions | fix the environment; reopen. The write that threw was not acknowledged |
+| `CorruptionException` | bytes on disk are wrong (a checksum mismatch, a bad structure) | stop, and keep the directory for inspection. Shale does not mean to repair anything silently, but two WAL header faults currently slip past it (§10). Some malformed SSTable fields still surface as other runtime exceptions until M4.5 |
+| `StorageException` | the environment failed: I/O error, disk full, permissions | fix the environment, then **close and reopen before writing again**: nothing stops further writes yet (M5 does), and continuing can make `get` and `scan` disagree. If it came from a flush the write triggered, that write was already logged and applied, so treat its outcome as **unknown**, not as absent |
 | `EngineStateException` | the engine cannot serve the request now | today: not thrown. From M5: closed, or failed after an I/O error — reopen |
 | `IllegalArgumentException` | a caller bug, such as a `null` key | fix the calling code |
 
@@ -161,10 +175,20 @@ online consistent backup.
 
 ## 10. Current limitations — read before relying on it
 
+**Known defects.** The full list is in the bug log's
+[open-defect register](../bug-log.md#open-defects).
+
 | Limitation | Lifts at |
 |---|---|
+| **One bit flipped in a WAL fragment header (its type, or its length) can make `open` succeed with acknowledged writes missing, and then delete the log** | M4.5 |
+| **Malformed SSTable metadata** can be misread, or raise `ArithmeticException` or `ArrayIndexOutOfBoundsException` instead of `CorruptionException` | M4.5 |
+| **`SYNC` is not yet power-loss durable** across a segment switch or a flush (§5) | M5 |
+| **After a `StorageException`, writes are still accepted**; continuing without a reopen can make reads disagree | M5 |
+| **A failed `open` or `scan` leaks file handles**: retry a few times, not in a loop | M5 |
+| **More than 999,999 files** over a database's life (one per flush and per WAL segment): newer files are ignored on reopen | M5 |
+| **Cursors are weakly consistent**, not snapshots (§6) | M7 |
 | **Disk use only grows:** there is no compaction, so no SSTable is ever deleted, and every flush adds one | M6 (compaction), M5 (safe deletion) |
-| **Reads slow down as tables accumulate:** a missing key is looked for in every SSTable | M6 (compaction), M7 (bloom filters) |
+| **Reads slow down as tables accumulate:** a missing key is looked for in every SSTable, and even an empty scan reads one data block from each | M6 (compaction and key-range selection), M7 (bloom filters) |
 | **Two processes opening one directory will corrupt it:** there is no `LOCK` file yet | M5 |
 | **A flush blocks writers** while it writes and fsyncs a table | M5.5 |
 | **No atomic multi-key writes, and no snapshots** | M7 |
@@ -178,6 +202,10 @@ online consistent backup.
   and is guarded by a checked-in golden file (`on-disk-formats.md`). A database written by an
   older build opens in a newer one. The one planned exception is the one-time migration of M4
   directories at M5, which is automatic.
+- **M4.5 changes the WAL to v2** (a checksum on each fragment header, ADR-0024). A newer build
+  reads v1 segments; an M4 build cannot read v2 ones. A v1 log whose last fragment was cut short
+  mid-payload by a crash cannot be verified. Opening it fails with a message naming the file and
+  offset, and you decide whether to truncate that tail and reopen.
 - **The Java API** may still change before Shale 1.0 (M8). Methods shown here will keep working;
   new ones are added beside them. After 1.0, anything outside `dev.shale.internal` follows
   semantic versioning.

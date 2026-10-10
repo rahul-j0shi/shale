@@ -66,7 +66,16 @@ project's purpose. After M6 the project is an LSM engine.
     level-0 file is ever left above data it overlaps that moved down. Every compaction from level
     *n* takes all overlapping files of level *n+1*.
   - **Tiered:** contiguity (§2.1).
-- **`scan`** is unaffected: it merges every source and reconciles by sequence.
+- **`scan` selects its sources by key range (SH-17).** It merges the memtables, plus only those
+  files whose `[smallestUserKey, largestUserKey]` intersects `[from, to)` (any file, if a bound
+  is `null`). Then it reconciles by sequence, as before.
+  - A file whose range does not intersect cannot hold any version of a key in the range, live or
+    tombstone. Excluding it therefore changes no result.
+  - The ranges come from the manifest's `FileMetadata`, which is validated when it is replayed.
+    Nothing is reread from table contents per query, and there is no second cache.
+  - Files that might overlap are always kept. The rule removes only *proven* non-overlaps
+    (LevelDB's `Version::AddIterators` keeps every level-0 file and uses one concatenating
+    iterator per level; Shale keeps one iterator per selected file, as at M4).
 
 ### 2.3 Leveled picking (LevelDB's `PickCompaction`)
 
@@ -198,7 +207,7 @@ reach a known shape; D7 exposes them as SQL `CHECKPOINT`.
 
 Update the index. **Done when:** merged.
 
-### Step 2 — levels and the point-lookup order (`m06/levels`), ~4 days
+### Step 2 — levels, the point-lookup order and scan range selection (`m06/levels`), ~5 days
 1. `feat(api)`: the `ShaleOptions` fields and `CompactionStyle`.
 2. `feat(manifest)`: `Version` per-level structure and queries.
 3. `feat(api)`: `Shale.get` follows `Version.lookupOrder`.
@@ -209,6 +218,17 @@ Update the index. **Done when:** merged.
    - a key with versions in L0, L1 and L2 returns the newest;
    - a key only in L3 is found;
    - `get.sources.probed` is right in each case.
+5. `perf(iterator)`: `Shale.scan` builds iterators only for the files `Version.overlapping`
+   selects (§2.2). Tests:
+   - **`ShaleRangeSelectionTest`, the review's exact layout** (1, 16 and 128 tables of `K0000…`):
+     the empty scan of `[A, B)` and the `get` of `A` read **zero data blocks**, counted with M5.5's
+     `readCount`;
+   - the overlapping control of M5.5's `ReadFanOutCountTest`, extended with keys equal to a
+     table's smallest and largest, a tombstone in an overlapping table hiding a value in an older
+     one, and `null` bounds: every result equals the oracle's.
+
+   The commit's `Benchmark:` trailer cites `ReadFanOutBenchmark` before (from
+   `documentation/benchmarks/0001-baseline-before-m5-5.md`) and after.
 
 **Done when:** those tests and every existing test pass. No compaction runs yet.
 
@@ -292,7 +312,8 @@ recorded in the changelog.
   table, the invariant of §2.2 with its proof sketch.
 - Glossary rows: sorted run, compaction pointer, trivial move, grandparent, compaction debt, base
   level.
-- A changelog entry with the measured write amplification of both styles on the bounded workload;
+- A changelog entry with the measured write amplification of both styles on the bounded workload,
+  and the read fan-out before and after range selection (SH-17 closes there);
   README status; the completion plan's status table.
 - `guides/embedding-shale.md`:
   - `flush()`, `compactRange` and the compaction `ShaleOptions`;
@@ -308,7 +329,10 @@ recorded in the changelog.
 - **Bounded:** file count and level 0 stay bounded under continuous writes, in both styles
   (`ShaleBoundedFilesTest`, `ShaleTieredTest`).
 - **Correct:** compaction preserves the newest version of every key (the `CompactionJobTest`
-  property, the model test); no resurrection; the lookup-order invariant (`ShaleLookupOrderTest`).
+  property, the model test); no resurrection; the lookup-order invariant (`ShaleLookupOrderTest`);
+  range selection never drops a live version (`ShaleRangeSelectionTest`).
+- **Fan-out measured:** zero data blocks read for a non-overlapping empty scan and missing key
+  (`ShaleRangeSelectionTest`), and `ReadFanOutBenchmark` before and after, committed.
 - **Crash-safe:** every compaction crash point recovers, and inputs are deleted only when
   obsolete and unreferenced.
 - **Counted:** amplification and debt counters match hand computation.

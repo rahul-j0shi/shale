@@ -18,7 +18,7 @@ flowchart TB
     demo["shale-demo — the CRUD app + engine panel · D7<br/>a client like any other: PostgreSQL JDBC driver"]:::plan
     server["shale-server — PostgreSQL wire protocol · sessions · D5"]:::plan
     sdb["shale-db — record layer · catalog · SQL · planner · executor · transactions · cost accounting · D1-D6"]:::plan
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M5-M7: manifest · write path · compaction · batches · snapshots · bloom"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M4.5-M7: integrity checks · manifest · write path · compaction · batches · snapshots · bloom"]:::part
     bench["shale-bench — JMH · db_bench-style workloads · RocksDB and SQLite as reference baselines · M5.5, M8, D7"]:::plan
   end
   demo -->|"PostgreSQL protocol (no code dependency)"| server
@@ -57,7 +57,7 @@ flowchart TB
   end
 
   subgraph wpath["Write path"]
-    wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · group commit M5.5 · batch records M7"]:::done
+    wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · header CRC M4.5 · group commit M5.5 · batch records M7"]:::done
     mem["Memtable ✓ M2 lock-free skiplist"]:::done
     imm["Immutable Memtable(s) ✓ M2 switch · ✓ M3 flush drains to SSTable"]:::done
   end
@@ -175,7 +175,7 @@ flowchart LR
     unit["Unit ✓ M0"]:::done
     modelt["Model vs TreeMap ✓ M0"]:::done
     prop["Property · jqwik ✓ M0"]:::done
-    crash["Crash · ✓ M1 WAL truncation · simulated filesystem M5"]:::part
+    crash["Crash · ✓ M1 WAL truncation · log framing matrices M4.5 · simulated filesystem M5"]:::part
     soak["Soak M6"]:::plan
     logic["Logic tests · .slt + differential queries D2"]:::plan
     serial["Serializability · anomaly schedules + serial replay D4"]:::plan

@@ -19,7 +19,9 @@ Chrome's IndexedDB; RocksDB sits under Kafka Streams' state stores and Flink's k
 has a query language. The application knows its keys and asks for them directly.
 
 Shale is the same kind of thing: a Java library holding an ordered map of byte keys to byte
-values in a directory. It is durable and crash-safe. You call `put`, `get`, `delete` and `scan`.
+values in a directory. It recovers from process crashes; its known limits, including open
+defects, are in [Embedding Shale §10](guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it).
+You call `put`, `get`, `delete` and `scan`.
 
 A query engine is what turns that into a **database**: tables, SQL, a planner. ShaleDB is that
 database, built on Shale. It is one user of the engine, not a requirement for using it. Start with
@@ -79,13 +81,23 @@ arrives in M6. After M6, leveled compaction bounds the space used to roughly 1.1
 
 ### What happens if my machine loses power mid-write?
 
-It depends on the durability mode you chose for that write:
-- **`SYNC`** (and `GROUP`): the write had reached disk before `put` returned, so it survives.
-- **`NONE`**: the most recent writes may be lost. Every write before the last `SYNC` survives.
+**Today, an acknowledged `SYNC` write is not guaranteed to survive a power loss.** It survives a
+process crash.
+- **The gap:** the record's bytes are fsynced before `put` returns, but the directory entry of a
+  newly created log segment or flushed table is not. A power loss soon after a memtable switch or
+  a flush can lose the file.
+- **`NONE`:** the most recent writes may be lost. Today a power loss across a segment switch can
+  even lose `NONE` writes from before a later `SYNC`, because a closed segment is not synced.
+  M4.5 syncs a segment when it closes.
+- **From M5:** directory syncs, and a simulated filesystem that drops unsynced data and directory
+  entries at every file operation, so `SYNC` then means "survives power loss", with a test behind
+  it. Physical power loss is never tested; that claim rests on fsync ordering.
 
-In every case, recovery restores a **prefix** of your writes: never a later write without an
-earlier one, and never a torn or garbled record. [Embedding Shale §5](guides/embedding-shale.md#5-durability-what-each-mode-promises)
-says how each claim is tested.
+After a process crash, recovery restores a **prefix** of your writes, never a later write without
+an earlier one. **One exception remains open until M4.5:** a single flipped bit in a log fragment's
+header can be mistaken for a torn tail, and recovery then silently drops acknowledged writes.
+[Embedding Shale §5](guides/embedding-shale.md#5-durability-what-each-mode-promises) says which
+failure each claim is tested against.
 
 ### How do I back it up?
 
@@ -113,10 +125,10 @@ No, and none of these is planned:
 
 ### Is it production-ready?
 
-**No.** It is a study project with unusually thorough crash and corruption testing, but it has no
-production use, no public release, and the limitations in
-[Embedding Shale §10](guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it).
-Use it to learn, to experiment, or to read.
+**No.** It is a study project with no production use and no public release. Its known defects
+are listed openly, in [Embedding Shale §10](guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it)
+and the [bug log](bug-log.md#open-defects), each with the milestone that fixes it. Two of them can
+silently lose acknowledged writes. Use it to learn, to experiment, or to read.
 
 ---
 
@@ -231,10 +243,20 @@ Kafka, Elasticsearch/Lucene, Neo4j and H2.
 By tests designed to find the bugs storage engines actually have. See the
 [testing conventions](conventions/testing.md).
 
-**Crash consistency:**
-- the write-ahead log is truncated at *every byte offset*, and recovery must return exactly the
-  complete records;
-- every SSTable is corrupted at *every byte offset*, and every corruption must be detected.
+**Crash consistency:** the write-ahead log is truncated at *every byte offset*, and recovery must
+return exactly the complete records.
+
+**Corruption:** every byte of an SSTable is flipped, and each case must be detected or proven
+harmless.
+
+**Where the tests fall short, and how that was found.** An external engineering review
+(October 2026) showed that the tests covered less than the claims:
+- the WAL had no bit-flip test, and two different one-bit header faults pass recovery silently;
+- several decoders trust a length or a count before checking it.
+
+Each finding has a reproduction and an owning plan step
+([completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
+M4.5 is the response: a checksum on every log header, and a bit-flip test at every bit.
 
 **Model checking:** thousands of random operations, with restarts, run against a `TreeMap`
 oracle.
@@ -243,6 +265,8 @@ oracle.
 unnoticed.
 
 **Planned:**
+- **M4.5:** every header bit and every truncation offset of the log, and malformed structures
+  with valid checksums for every decoder.
 - **M5:** a simulated filesystem crashes and loses power at every file operation.
 - **M6:** a soak test runs for hours.
 - **D2:** SQL is checked in the sqllogictest format against PostgreSQL's semantics.
@@ -251,10 +275,16 @@ unnoticed.
 
 ### What does it do when it finds corruption?
 
-It stops, and says where. A checksum mismatch throws `CorruptionException` with the file, the
-offset, and the expected and actual values. The engine never skips a record or truncates a file
-to keep going. Deciding whether to recover is the operator's call, made explicitly. A storage
-engine that hides corruption is worse than one that crashes.
+It is meant to stop and say where. A checksum mismatch throws `CorruptionException` with the
+offset, and the expected and actual values; M5 adds the file name. Deciding whether to recover is
+the operator's call, made explicitly. A storage engine that hides corruption is worse than one
+that crashes.
+
+**Today that rule has two known holes:**
+- a damaged WAL header type or length can be read as a torn tail and dropped silently;
+- some malformed SSTable fields surface as other runtime exceptions.
+
+M4.5 closes both (ADR-0024).
 
 ### How would you scale it beyond one machine?
 
@@ -264,7 +294,8 @@ visible (ADR-0013). But the seams a distributed design would use are there.
 **Replication:** replicate a log of the engine's atomic `WriteBatch`es with Raft.
 - Each replica applies the same batches in the same order.
 - Each batch carries its sequence span (M7), so a replica's position is one number.
-- That is how CockroachDB and TiKV use RocksDB underneath Raft.
+- That is how TiKV uses RocksDB underneath Raft, and how CockroachDB uses Pebble, its Go LSM
+  engine modelled on RocksDB.
 
 **Sharding:** partition the key space into ranges. ShaleDB's keys are already prefixed by table
 and index id (D1), so a range split is a split in one ordered key space.
@@ -310,7 +341,8 @@ implementation-level [plan](roadmap/completion-plan.md).
 **As-built explanations:** every finished milestone has an [architecture](architecture/README.md)
 page with diagrams.
 
-**The bug log:** the [bug log](bug-log.md) records the defects the process caught, and how.
+**The bug log:** the [bug log](bug-log.md) records the defects the process caught, and how, plus
+an open register of known defects not yet fixed.
 
 ### What was hardest, and what would you do differently?
 

@@ -33,7 +33,7 @@ to [Embedding Shale](guides/embedding-shale.md); for questions, the [FAQ](faq.md
 | **Roadmap** | *Why, what, and in what order?* The charter, the completion plan, a plan per remaining milestone. | [charter](roadmap/charter.md) · [completion plan](roadmap/completion-plan.md) |
 | **Guides** | *How do I use it?* Setup, API, durability, operation and limitations, for users rather than readers of the code. | [embedding Shale](guides/embedding-shale.md) · planned: operating Shale (M8), the ShaleDB quickstart (D5) and SQL reference (D2) |
 | **FAQ** | *What would a user or an interviewer ask?* Short answers that link to the detail. | [faq.md](faq.md) |
-| **Bug log** | *What went wrong, and how was it caught?* | [bug-log.md](bug-log.md) |
+| **Bug log** | *What went wrong, how was it caught, and what is known broken now?* | [bug-log.md](bug-log.md) |
 | **Changelog** | *What has shipped?* One entry per finished milestone. | [CHANGELOG.md](../CHANGELOG.md) |
 | **ADRs** | *Why is it built this way?* One record per expensive, hard-to-reverse decision. | [adr/README.md](adr/README.md) |
 | **Architecture** | *How does the shipped code actually work?* As-built HLD/LLD explainers with diagrams, per milestone. | [architecture/README.md](architecture/README.md) |
@@ -70,9 +70,15 @@ flowchart LR
 
 ## Where the project is now
 
-Through **M4** (tag `m4-merge`): a durable, crash-consistent engine with a write-ahead log, a
-hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming reads
-through a heap-based multi-way merge with reconciliation. See the
+Through **M4** (tag `m4-merge`): an engine that recovers from process crashes, with a write-ahead
+log, a hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming
+reads through a heap-based multi-way merge with reconciliation.
+
+**Next is M4.5.** An external engineering review (October 2026) found defects that the
+[bug log's open register](bug-log.md#open-defects) lists, including two one-bit WAL header faults
+that silently lose acknowledged writes. Every one of its findings has an owning step in the
+[completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed),
+and [ADR-0024](adr/0024-recovery-integrity-boundaries.md) records the response. See the
 [README status](../README.md) and the [changelog](../CHANGELOG.md) for specifics, and the
 [completion plan](roadmap/completion-plan.md) for what comes next; the
 [architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed

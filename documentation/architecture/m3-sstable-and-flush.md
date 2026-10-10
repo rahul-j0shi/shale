@@ -67,7 +67,13 @@ flowchart TB
 ```
 
 The flush is **synchronous** on the write path at M3 (it blocks that one writer; readers stay
-lock-free throughout). A background flush thread with write stalls is M6. Publishing the frozen
+lock-free throughout). A background flush thread with write stalls is M5.5.
+
+**What "durable" means here, precisely.** The table's bytes are forced before the rename, and the
+rename is atomic, so a process crash never sees a half-written table. But the directory is not
+synced after the rename, nor after the new WAL segment is created. After a power loss, the rename
+can be lost while the deletion of the old segment survives (SH-04). M5 adds the directory syncs
+and the manifest. Publishing the frozen
 memtable as an immutable before the flush, then replacing it with the table after, means a concurrent
 reader always sees the data — as a memtable or as a table, never neither.
 

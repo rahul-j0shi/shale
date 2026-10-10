@@ -168,9 +168,11 @@ same and one is much easier to test than the other:
 | Model | What fails | How we cover it |
 |---|---|---|
 | **Process crash** | The process dies; the page cache survives | Directly tested — truncate the WAL at every offset, reopen, assert the recovered prefix |
-| **Power loss** | The machine loses power; anything not `force()`d is gone, including the device write cache | *Asserted by construction*, not tested — we fsync before acknowledging and rely on `FileChannel.force` reaching stable storage |
+| **Damaged bytes** | A written byte changes | Bit flips and malformed-structure fixtures per format. The WAL had none until M4.5, and that gap hid two silent-loss faults (ADR-0024) |
+| **Simulated power loss** | Anything not `force()`d is gone, *including directory entries not synced* | **Not yet covered.** The construction argument is incomplete until M5: `force()` makes a record's bytes durable, but a new segment's or a flushed table's directory entry is not synced. M5's `FaultInjectionEnv` tests it at every file operation |
+| **Physical power loss** | A real machine, its device write cache included | Never tested. Argued from fsync ordering (D3) once directory syncs exist, and relying on `FileChannel.force` reaching stable storage |
 
-Killing a process proves the first and says nothing about the second: a `write()` that never
+Killing a process proves the first and says nothing about power loss: a `write()` that never
 reached the disk still survives `kill -9` because the page cache outlives the process. So a
 claim of power-loss durability rests on the ordering argument (`force()` before ack, D3), and
 the crash test's job is to prove the *recovery* logic handles every truncation point. Say

@@ -77,7 +77,7 @@ first-class logged record, not the absence of one.
 | Mode    | `force()` before return? | Meaning                                                        |
 |---------|--------------------------|----------------------------------------------------------------|
 | `NONE`  | no                       | in the page cache; survives process crash, not power loss      |
-| `SYNC`  | yes, every append        | fsync'd before ack; survives power loss                        |
+| `SYNC`  | yes, every append        | fsync'd before ack; survives power loss once the segment's directory entry is synced too (M5) |
 | `GROUP` | yes (M1: same as SYNC)   | reserved for batched group-commit fsync — one fsync, many writers (M2+) |
 
 The single line where data becomes durable is `channel.force(false)` in
@@ -202,6 +202,12 @@ look superficially similar at the tail of a file:
   silently skipped or repaired — `CorruptionException` carries the file offset and expected/actual
   values (CLAUDE.md N4). A present-but-wrong byte is a real fault; a missing byte is a torn tail.
 
+> **Known gap (found 2026-10, fixed by M4.5).** The reader learns *whether* a byte is missing from
+> the `length` field, which no CRC covers, and it takes the `ZERO` branch before checking any CRC.
+> So one flipped bit in a header can turn corruption into a "torn tail" (SH-08, SH-18). Recovery
+> then silently drops acknowledged records. The flowchart below is the M1 code as built; the
+> decision table that replaces it is [ADR-0024](../adr/0024-recovery-integrity-boundaries.md) §2.
+
 ```mermaid
 flowchart TB
   start["pos = 16 (after header)"]
@@ -318,4 +324,5 @@ flowchart TB
 The crash test is the load-bearing one: it writes `k0…k4` under `SYNC`, truncates the segment at
 every byte offset from the end of the header onward, and asserts each recovery is exactly some prefix
 of the writes — no extra records, none reordered, no half-decoded value. That is the operational
-meaning of "durable and crash-consistent" at M1.
+meaning of "durable and crash-consistent" at M1, under the *process-crash* model only: it
+truncates a valid file and never damages a byte, so it could not have caught SH-08 or SH-18.

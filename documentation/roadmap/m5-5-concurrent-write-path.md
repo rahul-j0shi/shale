@@ -179,10 +179,34 @@ Update the ADR index. **Done when:** merged.
    - `@Fork(2)`, `@Warmup(3)`, `@Measurement(5)`.
 3. `test(bench)`: `ReadBenchmark` — `get` of random existing keys over 100,000 keys that have been
    flushed.
-4. Run at 1, 4 and 16 threads. Record the numbers and the environment (commit, JDK, CPU, disk,
-   filesystem) in this branch's merge commit body. Raw output is not committed.
+4. `test(bench)`: `ReadFanOutBenchmark`, the review's SH-17 workload (`@Param` tables = 1, 16, 128):
+   - one table per write, with distinct keys `K0000`, `K0001`, …;
+   - an empty scan of `[A, B)` and a `get` of the missing key `A`;
+   - `Mode.SampleTime`, for latency percentiles rather than a mean;
+   - run once more with `-prof gc`, to record the allocation per narrow scan.
+5. `test(recovery)`: `ReadFanOutCountTest` (untagged, deterministic). It runs the same layout
+   through `FaultInjectionEnv` with a read-counting hook (`readCount(path)`, added to the fixture
+   here) and **records**, rather than asserts as a target:
+   - tables in the Version;
+   - tables whose iterator was built;
+   - data blocks read;
+   - bytes read;
+   - rows returned.
 
-**Done when:** the numbers are in the merge commit.
+   Its one assertion is an overlapping-key correctness control against the `TreeMap` oracle
+   (overwrites, tombstones and keys exactly on the range bounds), so the M6 optimisation measured
+   against this baseline has a correctness check already in place.
+6. `test(bench)`: `WritePathBenchmark` gains `Mode.SampleTime` at the write buffer's boundary, so
+   the latency of the write that runs a flush (the flush tail) shows up in p99 and p99.9.
+7. Run at 1, 4 and 16 threads. Commit the results as
+   `documentation/benchmarks/0001-baseline-before-m5-5.md` (`testing.md` §5), with the
+   environment (commit, JDK, CPU, disk, filesystem, page cache warm or dropped, durability mode),
+   the JMH configuration, and the counts from step 5, separating source setup from data-block
+   reads. Raw JMH output is not committed. The baseline is a measurement: no speedup is required
+   or claimed.
+
+**Done when:** `0001-baseline-before-m5-5.md` is merged. M6's range selection and Step 6 below
+both cite it.
 
 ### Step 3 — the write queue (`m05-5/write-queue`), ~5 days
 1. `test(api)`: the test helpers — `FaultInjectionEnv.holdSyncs/releaseSyncs/awaitSyncStarted`,
@@ -246,8 +270,9 @@ Update the ADR index. **Done when:** merged.
 **Done when:** all three are green; the crash matrix for 20 seeds locally.
 
 ### Step 6 — measurements, documentation, tag (`m05-5/docs`), ~2 days
-1. Re-run Step 2's benchmarks. Put both tables (before and after) in the changelog entry, with
-   the `wal.group.size` distribution at 16 threads. If 16-thread `SYNC` throughput did not
+1. Re-run Step 2's benchmarks. Commit `documentation/benchmarks/0002-after-m5-5.md`, and put both
+   tables (before and after) in the changelog entry, with the `wal.group.size` distribution at 16
+   threads and the flush-tail percentiles. If 16-thread `SYNC` throughput did not
    improve, the entry says why.
 2. `architecture/m5-5-concurrent-write-path.md`:
    - a sequence diagram of submit → group → sync → apply → complete;

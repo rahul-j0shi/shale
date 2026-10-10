@@ -22,7 +22,7 @@ split a topic across two, never invent a parallel system.
 | `CHANGELOG.md` | **what shipped** — one short entry per finished milestone | when the milestone is tagged |
 | `documentation/guides/*.md` | **how to use it** — setup, API, operation and limitations, for someone who wants to use the engine or the database, not to read its code | with the change that alters what a user does or sees |
 | `documentation/faq.md` | **the questions users and reviewers ask**, answered briefly with links to the surface that owns the detail | when an answer changes |
-| `documentation/bug-log.md` | **defects the process caught** — what, how found, the guard now in place | when such a bug is fixed |
+| `documentation/bug-log.md` | **defects the process caught** — what, how found, the guard now in place; and an **open register** of known defects not yet fixed, each with its fixing step | a register row when a defect is found; an entry when it is fixed |
 | `package-info.java` | a **package's** purpose, threading model, and entry point | with the package |
 | Javadoc + `// comments` | a **type's** contract and its source citation (N9) | with the type |
 
@@ -86,6 +86,7 @@ A milestone is not done until, in addition to green tests:
       updated,
 - [ ] the **user guides** and the **FAQ** say what is now true: new API and options, lifted
       limitations, answers that no longer say "planned" (each plan's docs step lists them),
-- [ ] any bug that reached a commit before being caught has a **bug-log** entry,
+- [ ] any bug that reached a commit before being caught has a **bug-log** entry, and every
+      defect the milestone fixed has left the open register,
 - [ ] new `package-info` / Javadoc carry their **N9 citations**, and the **glossary** (naming.md §1)
       has any new term.
