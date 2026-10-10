@@ -45,7 +45,7 @@ Therefore: **never introduce a dependency that implements a core concept.** See 
 Planned (ADR-0013) — created by the milestone named, not before:
     shale-db/                  record layer, catalog, SQL, planner, executor, transactions (D1)
     shale-server/              PostgreSQL wire-protocol server (D5)
-    shale-demo/                the CRUD demo application, a client of the server (D7)
+    shale-demo/                the CRUD demo app and the trace view, a client of the server (D7)
 ```
 
 ### The dependency rule

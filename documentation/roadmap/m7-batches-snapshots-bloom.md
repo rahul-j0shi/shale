@@ -157,6 +157,10 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
 | `tombstonesSkipped` | a tombstone hides a key during a scan, or ends a lookup |
 | `newerThanSnapshotSkipped` | the fourth rule skips an entry |
 
+- **Per level.** Every table counter (`tablesConsidered`, `tablesSkippedByRange`, `filterSkips`,
+  `tablesProbed`, `blocksRead`, `bytesRead`) is kept per level, 0–6, with the totals derived from
+  them. This lets D6's statement trace show *where* in the LSM a read landed, not only how much
+  it read: seven small arrays per operation, and no per-file detail.
 - **Plumbing:** `SSTableReader.ceiling(key, stats)` and `SSTableReader.iterator(stats)`;
   `ReconcilingCursor` holds the stats for its lifetime.
 - **Cost when unused.** With `null` stats every site pays one null check. Step 5's JMH benchmark
@@ -264,6 +268,7 @@ Commit the format with `Format-Change: wal v3 — one batch per record` and `Rev
    - a key in L2 under two memtables and three overlapping L0 tables;
    - the review's SH-17 layout of 128 non-overlapping tables: an empty scan and a missing key each
      report `tablesConsidered` = 128, `tablesSkippedByRange` = 128, `blocksRead` = 0;
+   - the per-level counters sum to the totals in every case above;
    - a scan over 100 keys, 30 of them deleted: `tombstonesSkipped` = 30;
    - a scan at a snapshot with 10 newer versions present: `newerThanSnapshotSkipped` = 10.
 

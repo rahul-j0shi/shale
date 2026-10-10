@@ -23,6 +23,7 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `VersionEdit` | `Delta`, `Change` | One atomic change to the file set |
 | `Version` | `Snapshot` (reserved, see below) | The live set of SSTables at a point in time |
 | `Snapshot` | `Checkpoint` | An MVCC read view, identified by a sequence number |
+| checkpoint (`Shale.checkpoint(Path)`) | `backup`, `clone` in identifiers | An online, consistent **copy** of the database directory: flush, pin a `Version`, hard-link the tables (RocksDB's Checkpoint; M8). **Not** SQL's `CHECKPOINT`, which in ShaleDB (D7) flushes and compacts in place and copies nothing; it keeps PostgreSQL's name because clients send it. The SQL command that *does* copy is `BACKUP TO` |
 | `SequenceNumber` | `Timestamp`, `Version`, `Txid` | Monotonic per-mutation counter |
 | `InternalKey` | `FullKey`, `EncodedKey` | user key + sequence number + value type |
 | `UserKey` | `Key` (ambiguous) | The caller's key bytes |
@@ -39,6 +40,15 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `BlockHandle` | `Pointer`, `Ref` | `{offset, size}` locator inside a file |
 | `Footer` | `Trailer`, `Header` | Fixed-size tail of an SSTable |
 | `BloomFilter` | `Filter` alone | Probabilistic membership filter |
+| torn tail | `partial write`, `truncated record` (for this meaning) | The end of a log left mid-append by a crash: bytes never fully written, so never acknowledged, and safe to drop. Never damaged bytes — those are corruption (ADR-0024) |
+| `RecoveryPolicy` | `RepairMode`, `Lenient` | The caller's choice of what recovery does with a torn tail: `TRUNCATE_TAIL` or `STRICT` |
+| durability mode (`Durability`) | `syncMode`, `fsyncLevel` | What an acknowledged write survives: `NONE`, `SYNC`, `GROUP` (ADR-0008) |
+| group commit | `batched fsync`, `coalescing` | One fsync covering many writers' records (ADR-0008; M5.5) |
+| `ReadView` | `MemtableSet` (its M2 name), `State` | The immutable set of sources a reader sees — the active memtable, the immutables and the tables — published with one volatile write |
+| pin / pinned | `lock`, `hold` (for a file) | A reference taken on an SSTable (`retain`) so it is not closed or deleted while a reader uses it |
+| weakly consistent cursor | `snapshot cursor` (it is not one) | A cursor that pins its sources but may see writes made after it opened; the M4–M6 behaviour (SH-03) |
+| failure model | `crash type` | The kind of failure a test or claim covers: clean restart, damaged bytes, torn tail, process death, simulated or physical power loss (ADR-0024 §7) |
+| write / read / space amplification | `overhead`, `bloat` | Bytes written to disk per byte written by the user / sources or bytes read per lookup / disk bytes per live byte (the RUM tradeoff) |
 | **ShaleDB** (D1+, ADR-0013) | | *The relational layer above the engine* |
 | `Catalog` | `Dictionary`, `SchemaRegistry`, `Metadata` | ShaleDB's registry of table and index descriptors, stored in the system keyspace. Never the engine's `Manifest` |
 | `TableDescriptor` / `IndexDescriptor` | `TableInfo`, `TableMeta`, `Schema` alone | The catalog entry for one table / one index |
