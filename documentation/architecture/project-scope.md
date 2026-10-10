@@ -15,7 +15,7 @@ is an empty harness, and the ShaleDB modules do not exist yet.
 ```mermaid
 flowchart TB
   subgraph repo["shale repo · Gradle 9.6.1 · vendored JDK 25 in .tools/"]
-    demo["shale-demo — the CRUD app + engine panel · D7<br/>a client like any other: PostgreSQL JDBC driver"]:::plan
+    demo["shale-demo — the CRUD app · trace view · engine panel · D7<br/>a client like any other: PostgreSQL JDBC driver"]:::plan
     server["shale-server — PostgreSQL wire protocol · sessions · D5"]:::plan
     sdb["shale-db — record layer · catalog · SQL · planner · executor · transactions · cost accounting · D1-D6"]:::plan
     core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M4.5-M7: integrity checks · manifest · write path · compaction · batches · snapshots · bloom"]:::part
@@ -128,11 +128,12 @@ flowchart TB
 A relational database on the engine's public `StorageBackend` interface (ADR-0013). Rows and
 indexes are encoded into ordered keys; SQL is parsed and planned into Volcano operators;
 transactions validate optimistically over engine snapshots. Every operator and engine call
-reports into one per-statement cost record, which `EXPLAIN ANALYZE` prints. All planned (D1–D7).
+reports into one **statement trace**. `EXPLAIN ANALYZE` prints it, `FORMAT JSON` returns it, and
+cost notices stream it to clients, where the demo's trace view draws it. All planned (D1–D7).
 
 ```mermaid
 flowchart TB
-  app["shale-demo · CRUD app + engine panel D7"]:::plan
+  app["shale-demo · CRUD app · trace view (path · plan · LSM · breakdown) · engine panel D7"]:::plan
   psql["psql · any PostgreSQL driver"]:::plan
   wire["shale-server · PostgreSQL wire protocol v3 · sessions D5"]:::plan
 
@@ -144,7 +145,7 @@ flowchart TB
     txn["Transactions · ordered commit queue · ReadSet / WriteSet · serializable OCC D4"]:::plan
     cat["Catalog · TableDescriptor · IndexDescriptor D1"]:::plan
     rec["Record layer · order-preserving encoding · row format · primary + secondary indexes D1"]:::plan
-    cost["Cost accounting · per-statement storage statistics · EXPLAIN ANALYZE D6"]:::plan
+    cost["Cost accounting · StatementTrace · EXPLAIN ANALYZE text + FORMAT JSON · cost notices D6"]:::plan
   end
 
   spi["shale-core StorageBackend · WriteBatch + Snapshot + per-operation statistics (M7)"]:::part
@@ -162,6 +163,7 @@ flowchart TB
   rec -->|"one WriteBatch per commit · reads at a Snapshot"| spi
   exec -. reports .-> cost
   spi -. reports .-> cost
+  cost -. "trace notices (JSON in Detail)" .-> wire
 
   classDef part stroke:#2ea043,stroke-width:2px,stroke-dasharray:6 3;
   classDef plan stroke:#8b949e,stroke-width:1px,stroke-dasharray:4 3;

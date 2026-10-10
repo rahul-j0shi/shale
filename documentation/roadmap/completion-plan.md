@@ -20,9 +20,12 @@ pass keeps them true to the code as it actually lands.
 ## 1. What "finished" means
 
 **The v1.0 claim:** *ShaleDB is a relational database built from scratch in Java. `psql`
-connects to it, `EXPLAIN ANALYZE` shows what each statement cost from the plan down to the fsync,
-its storage tradeoffs are measured through SQL workloads, and it survives `kill -9` without
-losing an acknowledged commit.*
+connects to it. `EXPLAIN ANALYZE` prints, and a browser view draws, what each statement cost: from
+the plan down to the fsync, and the compaction it leaves for later. Its storage tradeoffs are
+measured through SQL workloads, and it survives `kill -9` without losing an acknowledged commit.*
+
+What a reader actually sees at v1.0, who it is for, and how each part of the claim is checked:
+[charter §5](charter.md#5-the-end-goal-what-someone-sees-at-v10).
 
 | Phase | Milestones | Ends with |
 |---|---|---|
@@ -74,8 +77,8 @@ ADR-0013 records it and why.
 | **D3** joins, aggregates | The demo's loan list is a join; its stats page is a `GROUP BY`. |
 | **D4** transactions | Serializable isolation, falsifiable by tests; the demo's checkout depends on it. |
 | **D5** PostgreSQL protocol | `psql` and standard drivers instead of a custom client — less to build, far more convincing. |
-| **D6** cost accounting | The thesis itself: `EXPLAIN ANALYZE` down to the disk. |
-| **D7** demo, findings, launch | Makes the claim visible in five minutes, answers the measured questions, and packages it for a reviewer. |
+| **D6** cost accounting | The thesis itself: one statement trace, from the plan down to the disk, printed by `EXPLAIN ANALYZE` and streamed as JSON for D7 to draw. |
+| **D7** demo, findings, launch | Makes the claim visible in five minutes — the trace view draws each action's cost — answers the measured questions, and packages it for a reviewer. |
 
 ## 4. Milestones
 
@@ -95,11 +98,11 @@ estimate of 3–6, so recalibrate after M5 (§10).
 | D3 | Joins, aggregates, ordering | [plan](d3-joins-aggregates-ordering.md) | — | — | — | 2–3 | `d3-query` |
 | D4 | Serializable transactions | [plan](d4-transactions.md) | 0020 | — | — | 2–3 | `d4-txn` |
 | D5 | PostgreSQL wire protocol | [plan](d5-postgres-wire-protocol.md) | 0021 | (conforms to PostgreSQL's) | `shale-server` | 2–3 | `d5-pgwire` |
-| D6 | Cost accounting | [plan](d6-cost-accounting.md) | 0022 | — | — | 2 | `d6-cost` |
-| D7 | Demo, findings, launch | [plan](d7-demo-and-launch.md) | — | — | `shale-demo` | 3–4 | **`v1.0`** |
+| D6 | Cost accounting | [plan](d6-cost-accounting.md) | 0022 | statement-trace JSON v1 | — | 2–3 | `d6-cost` |
+| D7 | Demo, findings, launch | [plan](d7-demo-and-launch.md) | — | — | `shale-demo` | 4–5 | **`v1.0`** |
 
-**Totals:** engine ≈ 17–24 weeks, database ≈ 16–22 → **v1.0 ≈ 33–46 focused weeks** on these
-estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken: ≈ 28–40.
+**Totals:** engine ≈ 17–24 weeks, database ≈ 17–24 → **v1.0 ≈ 34–48 focused weeks** on these
+estimates, or roughly half that at the M0–M4 pace. With every cut in §8 taken: ≈ 29–42.
 
 ## 5. How to execute any milestone
 
@@ -149,7 +152,7 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 | 0019 | D2 | the frozen SQL subset; strict types; three-valued logic; rule-based planner |
 | 0020 | D4 | serializable backward-validation OCC; commits enqueued in commit order; DDL through the oracle, blocking writes |
 | 0021 | D5 | the PostgreSQL protocol subset; types; error codes; threading |
-| 0022 | D6 | per-operator statistics; `EXPLAIN ANALYZE` output; cost notices; system tables |
+| 0022 | D6 | per-operator statistics; the statement trace and its three renderings (text, `FORMAT JSON`, notices); the trace JSON format, versioned; system tables |
 | 0023 | M8 | the online checkpoint: flush, pin a `Version`, hard-link, commit by directory rename; `Env.link` |
 
 **Public API changes to `shale-core`** (each in its ADR, with a `Reversible:` trailer):
@@ -202,7 +205,8 @@ phase first: after M7, go to D1–D6, then M8, then D7 (D7 needs M8's report).
    and copy" for the server);
 2. size-tiered as a second policy (E1 and F3 become memtable-size and bloom sweeps);
 3. D3's outer joins, `HAVING` and `DISTINCT`;
-4. the demo's engine panel (keep the cost drawer: it is the thesis);
+4. the demo's engine panel, and the trace view's compare mode and Perfetto export (keep the trace
+   view itself — path, plan, LSM, breakdown, transaction strip: it is the thesis, drawn);
 5. one of the three write-ups.
 
 **Never cut:** M4.5, M5, M6's leveled compaction, M7, D4's serializable commit, D5, D6, or the crash
@@ -227,10 +231,10 @@ demonstrations. They are the claim.
 | Id | Status | Estimate (weeks) | Actual | Notes |
 |---|---|---|---|---|
 | M0–M4 | ✅ | 3–6 | ~2.5 | tag `m4-merge`; see the [changelog](../../CHANGELOG.md) |
-| M4.5 | ⏭ next | 2–3 | | ADR-0024 already accepted; start at Step 1 |
+| M4.5 | ⏭ next | 2–3 | | ADR-0024 already accepted; start at Step 0 |
 | M5 | ☐ | 3–4 | | write ADR-0012 first |
 | M5.5 · M6 · M7 · M8 | ☐ | 12–17 | | |
-| D1–D7 | ☐ | 16–22 | | |
+| D1–D7 | ☐ | 17–24 | | |
 
 ## 11. The October 2026 engineering review: where each finding is closed
 

@@ -26,6 +26,15 @@ to [Embedding Shale](guides/embedding-shale.md); for questions, the [FAQ](faq.md
    [m3-sstable-and-flush](architecture/m3-sstable-and-flush.md) →
    [format.md](../shale-core/src/main/java/dev/shale/sstable/format.md).
 
+## Pick your path
+
+| You want to… | Read, in order |
+|---|---|
+| **Use the engine** in your program | [Embedding Shale](guides/embedding-shale.md) (its §10 first: the known limits) → the [FAQ](faq.md) |
+| **Understand how an LSM database works**, from this code | the [charter](roadmap/charter.md) §1 and §5 → [project-scope](architecture/project-scope.md) → the as-built explainers M0 → M4 in order, each beside its ADR and `format.md` → the [glossary](conventions/naming.md#1-glossary--canonical-spellings) whenever a term is new |
+| **Evaluate the project** in ten minutes | the [README](../README.md) → [charter §5](roadmap/charter.md#5-the-end-goal-what-someone-sees-at-v10) (the end goal and how it is checked) → the [bug log](bug-log.md), open defects included → [completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed) → one explainer, e.g. [M4](architecture/m4-merge-iterator.md) |
+| **Build the next milestone** | [CONTRIBUTING](../CONTRIBUTING.md) (setup and the loop) → [CLAUDE.md](../CLAUDE.md) (the non-negotiables) → [completion plan §10](roadmap/completion-plan.md#10-status) (the first milestone not ✅: **M4.5**) → its plan, and the ADRs, `package-info.java` and `format.md` it names → the [conventions](conventions/) as each step needs them |
+
 ## The kinds of document
 
 | Area | What it answers | Index |

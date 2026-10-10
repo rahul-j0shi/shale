@@ -28,7 +28,29 @@ split a topic across two, never invent a parallel system.
 
 The [documentation map](../README.md) ties these together for a reader arriving cold.
 
+**The four kinds of reading** (Procida's *Diátaxis*). A page serves one, and links to the others
+instead of mixing them in:
+
+| A reader who wants to… | is served by |
+|---|---|
+| learn by doing (tutorial) | Embedding Shale §2; from D5, the ShaleDB quickstart; from D7, the tour |
+| get a task done (how-to) | the guides in `guides/` |
+| look up a fact (reference) | `format.md` files, conventions, Javadoc, the glossary |
+| understand why (explanation) | the charter, ADRs, `architecture/`, the FAQ |
+
 ## 2. Teach, don't just record
+
+**Every component must be understandable from its pages alone.** A reader of a component's
+explainer, its ADR and its Javadoc can answer, without asking anyone:
+- *what* it is, and its contract;
+- *why* it exists, what it costs, and what was rejected;
+- *where* it lives (package, type, file) and where it sits in the data path;
+- *how* it works, down to the bytes or the algorithm;
+- *when* it runs (on which thread, triggered by what) and in which milestone it arrived or
+  changes.
+
+These are not headings to fill in. They are the test a reviewer applies: if one has no answer,
+the page is unfinished.
 
 - **Why before what.** The diff already says what changed; prose says *why it is built this way* and
   *what it costs*. A paragraph that only restates the code earns its deletion.

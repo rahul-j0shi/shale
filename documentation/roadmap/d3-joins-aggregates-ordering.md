@@ -11,7 +11,16 @@ but that D2 cannot yet plan.
 
 ---
 
-## 1. Grammar additions (frozen for D3; extends ADR-0019's EBNF)
+## 1. Where the code will be at the start (after D2), and the grammar D3 adds
+
+D2 leaves single-table SQL working end to end:
+- `Lexer`, `Parser` and the sealed AST; `Binder` and `Planner`, choosing one `AccessPath` per
+  table;
+- the operators of D2 §2.4, run through `Session`;
+- `ReferenceExecutor`, `QueryGenerator` and the `.slt` logic tests.
+
+Nothing yet reads two tables, groups rows, or plans `IN`, `BETWEEN` or `LIKE` onto an index. The
+grammar below adds exactly that, and is frozen for D3 (it extends ADR-0019's EBNF).
 
 ```text
 select      = "SELECT" [ "DISTINCT" ] select_list "FROM" from_item { join }

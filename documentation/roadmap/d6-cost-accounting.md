@@ -10,12 +10,17 @@
 **This is the milestone the project exists for** (charter §1). Every statement's storage cost
 becomes visible from `psql`.
 
-**Goal:**
-- `EXPLAIN ANALYZE <statement>` runs the statement and prints its plan, with each operator's rows,
-  time and storage reads.
-- The statement's write-side cost is printed too.
-- A session setting streams a one-line cost summary after every statement.
-- Two system tables expose the engine's shape to SQL.
+**Goal.** Every statement produces one **statement trace**: its path from the plan, through each
+operator's reads of every memtable and level, to the WAL bytes, the shared fsync and the
+compaction debt it leaves behind. The trace is built once and rendered three ways, so the three
+can never disagree:
+- **as text:** `EXPLAIN ANALYZE <statement>` prints it in `psql`;
+- **as structure:** `EXPLAIN (ANALYZE, FORMAT JSON)` returns it as JSON, in PostgreSQL's plan
+  shape plus a `Shale` section;
+- **streamed:** a session setting sends it after every statement as a cost notice, as a one-line
+  summary or as the full JSON. That is how D7's demo draws it.
+
+Three system tables expose the engine's shape to SQL.
 
 ---
 
@@ -46,10 +51,18 @@ becomes visible from `psql`.
 - tombstones written;
 - the bytes staged.
 
-**Commit (the statement that commits, or `COMMIT` itself)** — from `WriteResult`:
+**Commit (the statement that commits, or `COMMIT` itself)** — from `WriteResult` and D4's
+`ValidationReport`:
 - WAL bytes;
 - whether the group synced, and how many transactions shared that sync (`groupSize`);
-- the engine sequence span.
+- the engine sequence span;
+- validation: read-set points and ranges, the committed transactions checked against, and, when
+  it aborts with `40001`, the table and index of the conflict.
+
+**Outcome.** Every statement records how it ended: `ok`, or its SQLSTATE. A failed statement
+still has a trace, with the work it did before failing, and its cost notice is sent **before** its
+`ErrorResponse` (the protocol allows notices at any time). A `40001` at `COMMIT` is therefore
+visible: what was validated, and against what.
 
 **Estimated compaction debt created** = the bytes staged × the engine's current write
 amplification, from `bytes.flush.written` + `bytes.compaction.written` over `bytes.user.written`.
@@ -89,7 +102,37 @@ Everything below reads that registry.
     estimated_compaction_debt=1.9 KiB (write amplification 8.7)
   ```
 
-### 2.4 Cost notices
+### 2.4 The statement trace — one structure, three renderings
+
+- **`StatementTrace`** (`dev.shale.db.cost`) is filled while the statement runs, from §2.1's
+  sources, and frozen when it ends. It holds:
+  - the plan tree, each node with its rows, time, and its `OperationStats`, kept **per source**:
+    the memtables, then each level 0–6. M7 Step 5 keeps the table counters per level for this;
+  - the write side, the commit and the statement's outcome (§2.1);
+  - the deferred cost: the estimated compaction debt, with its formula and an `"estimate": true`
+    flag, so nothing downstream can present it as exact;
+  - **the shape of the engine** when the statement ended: files and bytes per level, from the
+    registry (§2.2). This lets a viewer draw *where* in the LSM the statement's reads landed.
+- **Size is bounded.** Counters are aggregated per level, never per file. A trace is therefore
+  O(operators × 8) entries, whatever the database size.
+- **Statement text, without values.** The text is recorded with `$n` placeholders, and parameter
+  values never enter a trace. A trace can be shared without leaking data.
+- **The three renderings** are pure functions of the frozen trace:
+  - `CostRenderer.text(trace)` produces §2.3's text;
+  - `CostRenderer.json(trace)` produces `EXPLAIN (ANALYZE, FORMAT JSON)`. Its output is PostgreSQL's
+    shape: a one-element array whose object holds `"Plan"`, with nodes carrying `"Node Type"`,
+    `"Actual Rows"`, `"Actual Total Time"` and `"Plans"`. Each node adds a `"Shale Storage"` key,
+    and the object adds `"Shale"` (writes, commit, deferred, engine shape) and
+    `"Shale Trace Version": 1`. Keeping PostgreSQL's key names means the plan half also opens in
+    PostgreSQL plan tools such as pev2, run locally. The `Shale` keys are ours.
+  - `CostRenderer.summary(trace)` produces the one-line notice of §2.5.
+- **The JSON is a versioned format.** `dev/shale/db/cost/trace-format.md` documents every key,
+  its unit, and its source counter (`file:line`). A worked example is pinned by golden files. Keys
+  are emitted in a fixed order, so goldens compare byte for byte, and the server never needs a
+  JSON parser. Adding a key bumps `Shale Trace Version`; removing or renaming one is a breaking
+  change that needs an ADR.
+
+### 2.5 Cost notices
 
 - **`SET shale.cost_notices = on`** makes the session send, after each statement, a
   `NoticeResponse` (severity `NOTICE`, code `00000`) with a one-line summary:
@@ -98,11 +141,16 @@ Everything below reads that registry.
   cost: rows=1 keys_written=3 wal_bytes=212 fsync=shared(4) tables_probed=1 debt≈1.9KiB
   ```
 
+- **`SET shale.cost_notices = trace`** sends the same notice with the statement's JSON trace (§2.4)
+  in its **Detail** field (PostgreSQL's `D` field). `psql` shows it as `DETAIL:`; pgjdbc exposes it
+  through `PSQLWarning.getServerErrorMessage().getDetail()`.
 - `psql` prints notices as they arrive; pgjdbc exposes them through `Statement.getWarnings()`.
-  That is how D7's application shows every statement's cost without running anything twice.
-- **Off by default.** With it off, operators pass `null` stats (M7's no-cost path).
+  That is how D7's application shows and draws every statement's cost without running anything
+  twice.
+- **Off by default.** With it off, operators pass `null` stats (M7's no-cost path), and no trace
+  is built.
 
-### 2.5 System tables (read-only, virtual, in the catalog at reserved ids below 1000)
+### 2.6 System tables (read-only, virtual, in the catalog at reserved ids below 1000)
 
 | Table | Columns | Source |
 |---|---|---|
@@ -119,7 +167,8 @@ Everything below reads that registry.
 | Type | Package | Step |
 |---|---|---|
 | `MetricsRegistry` | `dev.shale.db` | 2 |
-| `StatementCost`, `CompactionDebtEstimate`, `CostRenderer` | `dev.shale.db.cost` | 3, 4 |
+| `StatementCost`, `CompactionDebtEstimate`, `StatementTrace`, `CostRenderer` (`text`, `json`, `summary`) | `dev.shale.db.cost` | 3, 4 |
+| `trace-format.md`, the statement-trace JSON reference | `dev/shale/db/cost/` | 4 |
 | operators: an `OperationStats` per storage operator; `Table` methods take stats and a `StatementCost` | `dev.shale.db.exec`, `dev.shale.db.table` | 3 |
 | `ExplainAnalyze` (runs the plan, collects, renders) | `dev.shale.db.plan` | 4 |
 | `SystemTables` (`shale_levels`, `shale_metrics`, `shale_verify`) | `dev.shale.db.catalog` | 5 |
@@ -130,6 +179,12 @@ Everything below reads that registry.
 ### Step 1 — ADR-0022 (`adr/0022-cost-accounting`), ~1 day
 `docs(cost)`: records §2, with the worked example of §2.3 for one `INSERT` and one `SELECT`.
 Alternatives:
+- a separate code path per output, text and JSON (rejected: the renderings would drift; one
+  frozen trace and pure renderers cannot);
+- a query-history table the demo reads after each statement (rejected: it needs a second query
+  and retention rules; the notice already reaches the client);
+- OpenTelemetry spans (rejected: a dependency, and spans describe time, while the cost here is
+  counts);
 - thread-local statistics (rejected: operators share threads);
 - a new engine statistics API (rejected: the `Metrics` sink already carries it);
 - sampling (rejected: exact counts are the point).
@@ -151,15 +206,25 @@ tiny sizes, fixed seed):
 
 **Done when:** exact matches.
 
-### Step 4 — `EXPLAIN ANALYZE` (`d06/explain-analyze`), ~3 days
-`feat(plan)`: the grammar, `ExplainAnalyze`, `CostRenderer`, `CompactionDebtEstimate`. Tests:
+### Step 4 — the trace and `EXPLAIN ANALYZE` (`d06/explain-analyze`), ~4 days
+1. `docs(cost)`: `trace-format.md` first — every key, unit and source, and a worked example for one
+   `INSERT` and one `SELECT`.
+2. `feat(plan)`: the grammar, `StatementTrace`, `ExplainAnalyze`, `CostRenderer` (all three
+   renderings), `CompactionDebtEstimate`. Tests:
 - **Golden outputs** (`explain_analyze.slt`, `TIMING OFF`) for:
   - a point lookup over two memtables and three tables;
   - a missing-key lookup with filters (skips, and zero blocks read);
   - a full scan after deleting half the rows (the tombstones skipped);
   - a scan at a snapshot with newer versions present;
   - an `INSERT` in autocommit (every line);
-  - the same `INSERT` inside `BEGIN` ("reported at COMMIT").
+  - the same `INSERT` inside `BEGIN` ("reported at COMMIT");
+  - a `COMMIT` that aborts with `40001` (outcome, validation and the conflict's table and
+    index; no key bytes).
+- **Golden JSON traces** (`golden/trace/v1/*.json`) for the same six statements, compared byte for
+  byte. These are also the fixtures D7's trace view is checked against.
+- **One trace, three renderings:** for every golden statement, `text`, `json` and `summary` agree
+  on every number. Each is generated from the same frozen trace, and the test reads the numbers
+  back out of each rendering and compares them.
 - **Invariants,** over the D3 differential query set:
   - the per-operator `blocks_read` sums to the statement's;
   - `wal_bytes` equals the committed batch's encoded size;
@@ -170,6 +235,10 @@ tiny sizes, fixed seed):
 ### Step 5 — notices and system tables (`d06/notices`), ~2 days
 `feat(api)`: `shale.cost_notices`; `Connection` sends the notice; `SystemTables`. Tests:
 - over pgjdbc, `getWarnings()` carries one cost line per statement when on, and none when off;
+- with `trace`, each notice's Detail equals `CostRenderer.json` of that statement's trace, and the
+  same statement's `EXPLAIN (ANALYZE, FORMAT JSON)` reports the same counts;
+- a statement that fails sends its notice before its `ErrorResponse`, and pgjdbc still delivers
+  it through `getWarnings()` on the failed statement;
 - `SELECT * FROM shale_levels` after a scripted flush and compaction matches the engine's state;
 - `shale_verify` returns no rows on a clean database, and a row per problem after a test
   deliberately deletes an index entry through the engine;
@@ -184,31 +253,36 @@ tiny sizes, fixed seed):
 2. Docs:
    - `architecture/d6-cost-accounting.md`: one `INSERT` traced from the SQL to the fsync, with
      every counter marked where it is incremented (`file:line`);
-   - glossary rows (statement cost, cost notice, system table);
+   - glossary rows (statement cost, statement trace, cost notice, system table);
    - README: the `EXPLAIN ANALYZE` example becomes the front-page demo;
    - changelog; the completion plan's status table;
    - `guides/shaledb-sql.md`, a "Seeing what a statement cost" section:
      - how to read `EXPLAIN ANALYZE`, line by line;
-     - cost notices, and how to turn them on;
+     - `FORMAT JSON`, and opening its plan half in pev2 locally;
+     - cost notices, `on` and `trace`, and how to turn them on;
      - the system tables, with a query for each;
    - the FAQ's cost answer loses "planned".
 3. **Reconciliation pass for D7.** Tag `d6-cost`.
 
 ## 5. Milestone acceptance gates
 
-- Golden `EXPLAIN ANALYZE` outputs match exactly with `TIMING OFF`.
+- Golden `EXPLAIN ANALYZE` outputs, and golden JSON traces, match exactly with `TIMING OFF`.
+- Text, JSON and notice renderings of one trace agree on every number.
 - Invariants tie per-operator totals to statement totals, over the differential query set.
 - `psql` and pgjdbc receive cost notices with no client change.
 - Overhead with cost reporting off is within benchmark noise.
 
 ## 6. Not in D6
 
-A cost-based optimizer using these numbers; query history tables; sampling; `EXPLAIN (BUFFERS)`
-or `(FORMAT JSON)`.
+A cost-based optimizer using these numbers; query history tables; sampling; `EXPLAIN (BUFFERS)`;
+`FORMAT YAML` or `XML`; per-file (rather than per-level) counters; drawing the trace, which is
+D7's.
 
 ## References
 
-PostgreSQL documentation, "Using EXPLAIN" (`ANALYZE`, `BUFFERS`, `WAL`, `TIMING OFF`) and "Messages
-and Error Reporting" (notices); RocksDB wiki, "PerfContext and IOStatsContext";
+PostgreSQL documentation, "Using EXPLAIN" (`ANALYZE`, `BUFFERS`, `WAL`, `TIMING OFF`, `FORMAT
+JSON`), "Messages and Error Reporting" (notices) and "Message Formats" (`NoticeResponse` fields);
+pev2 (Dalibo), a PostgreSQL plan visualizer that reads `FORMAT JSON`; DuckDB's profiling output
+(JSON per operator) as a model of one profile, several renderings; RocksDB wiki, "PerfContext and IOStatsContext";
 `EstimatedPendingCompactionBytes`; CockroachDB documentation, "EXPLAIN ANALYZE"; Matsunobu et al.,
 "MyRocks" (VLDB 2020) on the cost of secondary indexes on an LSM.

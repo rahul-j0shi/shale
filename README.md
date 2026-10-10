@@ -60,7 +60,9 @@ database, and it is one consumer of the engine, not a requirement for using it.
 | **Read how it works, or ask why** | — | [architecture](documentation/architecture/README.md) · [ADRs](documentation/adr/README.md) · [FAQ](documentation/faq.md) |
 | **Contribute** | the build below | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-Try it now, with nothing installed but `git` and `curl`:
+Try it now. On Linux x64 you need nothing but `git` and `curl`. On macOS or ARM, install any JDK
+25 yourself, set `JAVA_HOME` to it, and skip the bootstrap line; the script fetches a JDK for
+Linux x64 only until M4.5 Step 0.
 
 ```bash
 git clone https://github.com/rahul-j0shi/shale.git && cd shale
@@ -110,9 +112,16 @@ connects to it and `EXPLAIN ANALYZE` reports each statement's plan together with
 - its estimated compaction debt, which is labelled an estimate, because deferred work is shared by
   many statements.
 
+The same numbers are also **drawn**. In the demo application, every action opens a trace view
+showing the statement's path from the SQL through the plan, the memtables and each LSM level, to
+the WAL, the fsync it shared and the compaction it defers. Which levels were read, and which a key
+range or a bloom filter ruled out, is visible at a glance; the deferred part is drawn dashed,
+because it is an estimate. Text and picture come from one trace, so they cannot disagree.
+
 Existing systems can be instrumented from the outside, but owning every layer is what makes the
 attribution exact and short enough to explain, and building each layer is how it is learned.
-The full reasoning is in the [charter](documentation/roadmap/charter.md).
+What a reader sees at v1.0, and how each part is checked, is in the
+[charter](documentation/roadmap/charter.md#5-the-end-goal-what-someone-sees-at-v10).
 
 ## Architecture
 

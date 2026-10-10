@@ -308,6 +308,14 @@ published jar.
 - The `shale-bench` README rewritten to what exists; a README "How it performs" section linking
   the report.
 - A changelog entry with the three headline numbers; the completion plan's status table.
+- `architecture/m8-checkpoint-and-benchmarks.md`:
+  - the checkpoint sequence (flush, pin a `Version`, hard-link, commit by directory rename) with
+    every sync marked, and its crash map;
+  - the two harnesses, JMH and the workload runner, and what each measures;
+  - how one experiment goes from command to chart;
+  - the test map.
+- Glossary rows (`naming.md` §1): workload, experiment, reference baseline. *Checkpoint* is
+  already there, with the warning about SQL's `CHECKPOINT`.
 - **Version `1.0.0`:** set in `build.gradle.kts`.
 - **The GitHub release `shale-1.0`:** attach `shale-core-1.0.0.jar` and its sources jar, and put
   the changelog entry in the notes. A user can then download the jar, or run

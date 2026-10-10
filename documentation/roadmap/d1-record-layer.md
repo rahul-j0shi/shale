@@ -102,8 +102,14 @@ least significant bit first), then each non-null non-key column in schema order:
   - **Cost:** one byte per row below 128 columns.
   - **Why now:** it is decided in v1 because adding it later would be a format change (N2) that
     every existing row would need.
-- **Decoding** still validates structure: bitmap size, lengths within the value, no trailing
-  bytes. A failure is `CorruptionException` naming the table and key.
+- **Decoding** still validates structure, under ADR-0024 §6's decoder contract:
+  - `columnCount` and every TEXT length are decoded wide, checked against the format's width,
+    and checked against the bytes remaining *by subtraction* before any allocation;
+  - the bitmap's size must match `columnCount`;
+  - the value is consumed exactly, with no trailing bytes.
+
+  A failure is `CorruptionException` naming the table and key. No `RuntimeException` from a
+  malformed row escapes as anything else.
 
 ### 2.5 The catalog
 
@@ -262,8 +268,10 @@ public final class Table {                                   // obtained as txn.
 1. `docs(record)`: §2.4 in `format.md`, with a worked example.
 2. `feat(record)`: `RowCodec`.
 3. **Tests:** round-trip property over random schemas and rows; golden `golden/record/v1/row.bin`;
-   bit-flip at every offset of the golden (detected, or decodes to a row that the test then
-   rejects — never a crash or an out-of-bounds read); trailing bytes rejected;
+   bit-flip at every **bit** of the golden (detected, or decodes to a row that the test then
+   rejects — never a crash or an out-of-bounds read); malformed rows with plausible fields
+   (`on-disk-formats.md` §3 step 7): a TEXT length of 2^32 + 3, a `columnCount` of 2^31, a bitmap
+   one byte short; trailing bytes rejected;
    - a row written with *n* columns, decoded against a descriptor of *n* + 2, reads the two new
      columns as NULL;
    - `columnCount` greater than the descriptor's → `CorruptionException`.
@@ -273,8 +281,10 @@ Commit with `Format-Change: row v1 — new` and `Reversible: no`. **Done when:**
 ### Step 5 — the catalog (`d01/catalog`), ~3 days
 1. `docs(catalog)`: `catalog/format.md` for `DescriptorCodec`.
 2. `feat(catalog)`: descriptors, codec, `Catalog`, id allocation, name validation.
-3. **Tests:** codec round-trip property and golden; `Catalog` reload after reopen; ids are never
-   reused after a drop; invalid names are rejected.
+3. **Tests:** codec round-trip property and golden; bit-flip at every bit of the golden, and
+   malformed descriptors (a column count past the bytes present, an unknown type code), each
+   rejected with `CorruptionException`; `Catalog` reload after reopen; ids are never reused
+   after a drop; invalid names are rejected.
 
 **Done when:** green.
 
@@ -344,7 +354,8 @@ Commit with `Format-Change: row v1 — new` and `Reversible: no`. **Done when:**
   entry; `verify()` is clean after every recovery.
 - **DDL recovery:** a half-built index is dropped; a half-done drop finishes.
 - **Constraints:** duplicates and NULL violations are rejected before anything is staged.
-- **Formats:** goldens and bit-flip tests for keys, rows and descriptors.
+- **Formats:** goldens, bit-flip at every bit, and malformed-structure tests for keys, rows and
+  descriptors.
 - `shale-db`'s runtime dependency graph is empty; `verifyModuleGraph` passes.
 
 ## 6. Not in D1

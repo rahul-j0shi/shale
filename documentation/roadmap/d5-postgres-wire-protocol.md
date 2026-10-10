@@ -70,7 +70,8 @@ parameter types and result columns. `Result` is `RowResult` (streaming) or `Coun
 - **`CancelRequest`,** on a new connection with the process id and secret, sets a flag the
   session's operators check between rows → `57014`.
 - **`NoticeResponse`** carries warnings (for example `COMMIT` with no transaction, `25P01`) and
-  D6's cost notices.
+  D6's cost notices. It supports the severity, code, message and **detail** fields; D6's `trace`
+  notices put the statement's JSON trace in the detail.
 - `ErrorResponse` fields: `S`/`V` severity, `C` SQLSTATE, `M` message, `P` position.
 
 **Anything else** → `ErrorResponse` `0A000` naming the message type; the connection survives.
@@ -108,7 +109,7 @@ parameter types and result columns. `Result` is `RowResult` (streaming) or `Coun
 - **`SET` and `SHOW`:**
   - `SET` accepts `application_name`, `client_encoding` (`UTF8` only), `extra_float_digits`
     (accepted, ignored), `DateStyle` (accepted if `ISO`), `synchronous_commit`, and D6's
-    `shale.cost_notices`;
+    `shale.cost_notices` (`off`, `on`, `trace`);
   - `SHOW` returns their values;
   - anything else → `0A000`.
 - **`synchronous_commit`** maps to durability: `on` → `SYNC`, `off` → `NONE`. So a PostgreSQL

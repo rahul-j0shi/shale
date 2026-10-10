@@ -137,14 +137,26 @@ DDL that commits on that table aborts the transaction.
 `txn.commits`, `txn.commits.readonly`, `txn.aborts.conflict`, `txn.aborts.timeout`,
 `txn.validation.duration`, and `txn.committed_log.size` (a gauge).
 
+**Per commit, for D6's statement trace.** `commit()` returns, or attaches to its
+`TransactionConflictException`, a `ValidationReport`:
+- `readPoints` and `readRanges`: the read set's size after merging;
+- `transactionsChecked`: the committed entries with `ts > readTs` that validation compared
+  against — the work a long-running transaction makes its own commit do;
+- `waitedForApplied`: whether `begin` had to wait for `appliedTs`;
+- on a conflict, `conflictTable` and `conflictIndex`, the **names** of the table and index whose
+  key matched. Never the key itself, because key bytes hold column values.
+
+D6 puts it in `COMMIT`'s trace, and D7 draws it on the transaction strip. That is how the cost of
+a conflict, and of keeping a transaction open, becomes visible.
+
 ## 3. New and changed types
 
 | Type | Package | Step |
 |---|---|---|
 | `Oracle`, `WaterMark` | `dev.shale.db.txn` | 3 |
-| `ReadSet`, `WriteSet` | `dev.shale.db.txn` | 3 |
+| `ReadSet`, `WriteSet`, `ValidationReport` | `dev.shale.db.txn` | 3 |
 | `Transaction` — read tracking, oracle commit; writer lock removed | `dev.shale.db.txn` | 4 |
-| `TransactionConflictException` (`40001`) | `dev.shale.db.txn` | 4 |
+| `TransactionConflictException` (`40001`), carrying its `ValidationReport` | `dev.shale.db.txn` | 4 |
 | `Session` — the §2.5 statements and states, `setDurability` | `dev.shale.db` | 5 |
 | `DatabaseOptions` — adds `maxTransactionBytes`, `idleTransactionTimeout`; `Database.expireIdle()` | `dev.shale.db` | 5 |
 | test: `ScheduledSessions` (the deterministic scheduler), `SerialReplayChecker` | `shale-db` test | 2, 6 |
@@ -172,7 +184,8 @@ only on the engine's write future, which the writer thread completes, so no slee
 - `WaterMarkTest`: out-of-order marks, and the watermark advancing over contiguous prefixes;
 - `ReadSetTest`: membership, range merging, the early-stop range rule;
 - `OracleTest`: validation against hand-built committed logs; pruning bounds; failure wakes
-  waiters.
+  waiters; `ValidationReport` counts exactly the entries after `readTs`, and names the table and
+  index of a conflict without its key.
 
 **Done when:** green.
 

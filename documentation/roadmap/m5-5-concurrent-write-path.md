@@ -289,6 +289,8 @@ both cite it.
    - write stalls, and what a caller sees during one;
    - the new `ShaleOptions` fields;
    - the "flush blocks writers" limitation removed.
+
+   The FAQ's power-loss answer says what `GROUP` now is.
 6. **Reconciliation pass for M6:** reconcile its plan with the names that shipped.
 7. Tag `m5.5-write-path`.
 

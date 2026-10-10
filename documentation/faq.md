@@ -207,6 +207,16 @@ storage work done:
 - the fsync shared with other commits;
 - the compaction debt the statement added.
 
+**And drawn, not only printed.** `EXPLAIN (ANALYZE, FORMAT JSON)` returns the same trace as JSON,
+and the demo application (D7) draws it for every action:
+- the statement's path, through the plan, the memtables and each LSM level, to the WAL, the
+  shared fsync and the deferred compaction;
+- the LSM with the statement's reads marked on it;
+- a flame-graph-style breakdown of where the bytes went;
+- a multi-statement transaction as one strip ending at `COMMIT`.
+
+The plan half of the JSON also opens in PostgreSQL plan tools such as pev2.
+
 The `shale_levels` and `shale_metrics` system tables show the engine's state live.
 
 ---

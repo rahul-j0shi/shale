@@ -2,18 +2,20 @@
 
 **Status:** planned; the last milestone of v1.0. Starts after D6 is tagged. **Depends on:**
 - D5: the server; `CHECKPOINT` arrives here;
-- D6: cost notices, and the `shale_levels`, `shale_metrics`, `shale_verify` system tables;
+- D6: the statement trace and its `trace` cost notices; the `shale_levels`, `shale_metrics`,
+  `shale_verify` system tables; the golden JSON traces;
 - D3: `demo_queries.slt`, which proves every query used here;
 - M8: the engine report and the workload rules;
 - M6: `flush()`, `compactRange`.
 
 **Creates:** `shale-demo`. **ADR:** none (ADR-0013 already allows the demo's dependencies).
-**Estimate:** 3–4 focused weeks, in 8 steps. **Tag:** `v1.0`.
+**Estimate:** 4–5 focused weeks, in 8 steps. **Tag:** `v1.0`.
 
 **Goal.** Make the whole claim visible in five minutes:
 - an ordinary application runs on ShaleDB through the standard PostgreSQL driver;
+- every action shows **what it cost, drawn**: its path from the SQL through the plan, the
+  memtables and each LSM level, to the WAL, the shared fsync and the compaction it defers;
 - a panel shows the engine working underneath;
-- every action shows what it cost;
 - a scripted `kill -9` loses nothing.
 
 Then answer, with measurements, the questions the project exists to answer, and package it so a
@@ -49,7 +51,7 @@ CREATE INDEX loans_by_member ON loans (member_id);
 |---|---|---|
 | Browse books, 20 per page | `SELECT … FROM books ORDER BY title LIMIT 20 OFFSET $1` | order from `books_by_title`, no sort |
 | Search by author / title prefix | `WHERE author = $1` / `WHERE title LIKE $1` (`'dune%'`) | index scan; the `LIKE` prefix range |
-| Add, edit, delete a book or member | `INSERT` / `UPDATE … WHERE id = $1` / `DELETE … WHERE id = $1` | point access; index maintenance (visible in the cost line) |
+| Add, edit, delete a book or member | `INSERT` / `UPDATE … WHERE id = $1` / `DELETE … WHERE id = $1` | point access; index maintenance (visible in the trace) |
 | Check out a book | `BEGIN; SELECT available … WHERE id = $1; UPDATE books SET available = available - 1 WHERE id = $1; INSERT INTO loans …; COMMIT` | serializable OCC; retry on `40001` |
 | Return a book | `BEGIN; UPDATE loans SET returned_at = $2 WHERE id = $1; UPDATE books SET available = available + 1 WHERE id = $3; COMMIT` | a multi-statement transaction |
 | Overdue loans | `SELECT … FROM loans WHERE due_at < $1 AND returned_at IS NULL` | index range scan plus residual filter |
@@ -72,12 +74,13 @@ CREATE INDEX loans_by_member ON loans (member_id);
   - **Data access:** pgjdbc, and parameterised SQL only.
   - **Connections:** a fixed pool of 4, a `BlockingQueue` of `Connection`s. There is no pool
     library.
-  - **Cost notices:** every pooled connection runs `SET shale.cost_notices = on` once.
+  - **Cost notices:** every pooled connection runs `SET shale.cost_notices = trace` once.
 - **Frontend:** static HTML, CSS and plain JavaScript served from resources. No framework and no
   build step.
-- **"What did that cost?"** Every API response carries the cost notice lines of the statements it
-  ran (read from `Statement.getWarnings()`). The UI shows them in a collapsible drawer under each
-  action. Nothing is ever executed twice.
+- **"What did that cost?"** Every API response carries, for each statement it ran, the notice's
+  summary line and its JSON trace (the notice's Detail, read through `Statement.getWarnings()`).
+  The backend copies the trace string into the response verbatim and never parses it. The UI
+  draws it in the trace view (§1.4). Nothing is ever executed twice.
 - **Engine panel:** every second, `GET /api/engine` runs `SELECT * FROM shale_levels` and `SELECT
   * FROM shale_metrics`. The page draws:
   - files and bytes per level;
@@ -90,7 +93,82 @@ CREATE INDEX loans_by_member ON loans (member_id);
   A "generate load" button starts a server-side loop of random checkouts and returns for 30
   seconds, so the panel visibly moves.
 
-### 1.4 Scripts
+### 1.4 The trace view — seeing one statement end to end
+
+The project's claim is that a statement's cost is *visible*. A column of counters is visible only
+to someone who already knows what each one means. The trace view draws one D6 trace so that the
+path, the places, and the proportions can be seen at once:
+- the **path**: what happened, in what order;
+- the **places**: where in the LSM the work landed;
+- the **proportions**: which part dominated.
+
+It opens under each action, and on the `/trace-gallery` page (below) for D6's golden traces.
+
+```text
+INSERT INTO books …                        keys_written=3  wal_bytes=212  fsync=shared(4)
+─────────────────────────────────────────────────────────────────────────────────────────
+PATH  SQL → plan → Insert → mem → L0 → L1░ → WAL 212 B → fsync ×4 ┄┄→ later ≈1.9 KiB (estimate)
+
+PLAN                                   LSM, where it landed
+Insert  rows=1                         memtables  ●●        2 probed
+  storage ▕██ mem ▌L0 ░L1▏               L0       ▣         1 probed · 1 block
+  uniqueness lookups 2                   L1       ▨ ▨ ▨     3 skipped by filter
+    (1 answered by a filter)             L2–L6    ·         not reached
+
+BREAKDOWN (bytes)   ┌─────────────── Insert ───────────────┐
+                    │ mem │      L0 read      │  WAL write  │
+```
+
+**Five parts, all drawn from the same trace:**
+1. **The path strip.** The stages left to right, in the order the work happened:
+   - SQL → plan → each operator → the memtables → levels 0–6 → WAL → fsync → *later*.
+
+   Each stage shows its headline number. A stage that did no work is greyed, not hidden: a level
+   a filter ruled out is as instructive as one that was read. The *later* stage is the estimated
+   compaction debt. It is drawn dashed and labelled "estimate", with the model on hover. Deferred
+   work is shared by many statements, so it is never drawn as if it were exact.
+2. **The plan.** The operator tree, after pev2's layout. Each node shows rows, time (if timed),
+   and a bar of its blocks read, split by source (memtables, L0…L6). Clicking a node narrows
+   every other part to that operator.
+3. **The LSM, where the statement landed.** One row per source, sized from the trace's engine
+   shape: the memtables, then each level's files and bytes. Each level marks:
+   - tables considered;
+   - tables skipped by key range, and by bloom filter, shown hatched;
+   - tables probed, and blocks and bytes read.
+
+   Versions and tombstones skipped are shown on the operator that skipped them. This is the
+   picture an LSM tutorial draws, with the statement's own numbers in it.
+4. **The breakdown.** An icicle chart (a flame graph's layout, top-down): statement → operators
+   → sources. Its width is a selectable metric: bytes read, blocks read, or entries visited.
+   Hovering shows the exact counter and the `file:line` where the engine increments it (from
+   `trace-format.md`).
+5. **The transaction strip.** A multi-statement transaction (checkout, return) appears as its
+   statements in order, ending at `COMMIT`, where the WAL bytes, the fsync and its group size
+   appear. `COMMIT` also shows its validation: the reads it checked, and how many transactions
+   committed while it was open. A `40001` retry appears as a failed attempt marked with the
+   table and index it conflicted on, then the retry. The axis is ordinal, and becomes time only
+   when the statements were timed.
+
+**Two tools around it:**
+- **Compare.** Pin a trace, run another action, and see both side by side, with deltas. This is
+  how F1 (an `INSERT` with 0 vs 3 indexes) and F2 (a scan before and after `CHECKPOINT`) are
+  *shown*, not only charted.
+- **Export.** "Download JSON" saves the trace as-is. "Open in Perfetto" converts it in the
+  browser to the Chrome trace-event format: operators become slices when timed, and per-level
+  counts become counter tracks. ui.perfetto.dev opens it locally, with nothing uploaded.
+
+**How it is built.**
+- Plain JavaScript that writes SVG by hand: no framework, no chart library, no build step, as
+  for the rest of the frontend. Each part is a pure function, `render(trace) → SVG`.
+- **The view never computes a cost.** It draws the trace's numbers. It does one check: the
+  per-level counts must sum to the trace's totals. If they do not, it shows a red banner instead
+  of the drawing, because a picture that silently disagrees with its numbers is worse than no
+  picture.
+- **`/trace-gallery`** renders every D6 golden trace (`golden/trace/v1`).
+  It is the reference for the hand checklist, and the source of the screenshots in the README,
+  the tour and the write-ups.
+
+### 1.5 Scripts
 
 - **`scripts/demo.sh`:** build, start `bin/shaledb` on a temp directory, start the demo on port
   8080, seed 2,000 books and 200 members (fixed seed), print the URL.
@@ -106,13 +184,13 @@ CREATE INDEX loans_by_member ON loans (member_id);
   6. print `PASS`, or the missing ids.
 - **`docker-compose.yml`:** the server and the demo, for machines with only Docker.
 
-### 1.5 `CHECKPOINT`
+### 1.6 `CHECKPOINT`
 
 The D2 grammar gains `CHECKPOINT`, PostgreSQL's own command. ShaleDB defines it as
 `engine.flush()` then `engine.compactRange(null, null)` (M6 §2.7). It returns tag `CHECKPOINT`.
 The findings use it to reach a known compacted shape.
 
-### 1.6 `BACKUP TO` — an online backup through SQL
+### 1.7 `BACKUP TO` — an online backup through SQL
 
 `BACKUP TO 'name'` calls `engine.checkpoint(<backup-dir>/name)` (M8 §2.6) and returns tag `BACKUP`.
 The copy is consistent, taken while the server keeps serving, and is itself a data directory:
@@ -128,6 +206,17 @@ replication protocol, which is out of scope. The guides say so.
 
 **Transactions:** inside a transaction block, it is `25001`, as `VACUUM` is in PostgreSQL. A
 checkpoint is not transactional.
+
+### 1.8 Where the code lives
+
+| What | Where | Step |
+|---|---|---|
+| HTTP server, endpoints, connection pool, JSON writer, cost-notice collection | `shale-demo/src/main/java/dev/shale/demo/` (`DemoHttpServer`, `ShelfApi`, `ConnectionPool`, `JsonWriter`, `CostNotices`) | 2 |
+| Schema bootstrap and seed generator | `dev.shale.demo` (`ShelfSchema`, `Seeder`) | 2 |
+| Pages, the engine panel | `shale-demo/src/main/resources/web/` (`index.html`, `app.js`, `engine-panel.js`, `style.css`) | 3 |
+| The trace view and its five parts, compare, export, gallery | `web/trace/` (`trace-view.js`, `path.js`, `plan.js`, `lsm.js`, `icicle.js`, `txn-strip.js`, `perfetto.js`, `gallery.html`) | 3 |
+| The crash demonstration | `dev.shale.demo.CrashDemo`, `scripts/crash-demo.sh` | 4 |
+| The SQL findings harness | `shale-bench/src/main/java/dev/shale/bench/sql/` (`SqlStore`, `ShaleDbSqlStore`, `SqliteSqlStore`, `ShelfWorkload`) | 5 |
 
 ## 2. The findings (the SQL-level measurements)
 
@@ -154,8 +243,8 @@ checkpoint is not transactional.
 ### 3.1 The README (rewritten last, from what exists)
 
 1. The pitch, in one line.
-2. A 60-second GIF: `psql` → `EXPLAIN ANALYZE` of an `INSERT` → the app with its cost drawer →
-   `crash-demo.sh` printing `PASS`.
+2. A 60-second GIF: `psql` → `EXPLAIN ANALYZE` of an `INSERT` → the same `INSERT` in the app,
+   drawn by the trace view → `crash-demo.sh` printing `PASS`.
 3. "Run it in 60 seconds": `scripts/demo.sh`, or `docker compose up`.
 4. The architecture diagram.
 5. Two headline charts: one from M8, one from F1–F5.
@@ -188,7 +277,9 @@ checkpoint is not transactional.
 ### 3.3 The tour (`documentation/tour.md`)
 
 One `INSERT` and one `SELECT` followed from the wire protocol to the fsync and back, with a
-`file:line` link at every hop.
+`file:line` link at every hop. Each hop is shown beside the part of the trace view that draws it,
+using the gallery's screenshots of the two golden traces, so the reader can match the code to the
+picture.
 
 ### 3.4 The release
 
@@ -228,13 +319,23 @@ One `INSERT` and one `SELECT` followed from the wire protocol to the fsync and b
    - `ShelfApiTest`: every endpoint;
    - `CheckoutConflictTest`: two concurrent checkouts of the last copy → exactly one loan, the
      other told "already taken";
-   - every response carries its cost lines.
+   - every response carries one summary line and one trace per statement it ran, and each trace
+     is that statement's (its text and `Shale Trace Version` 1).
 
 **Done when:** green.
 
-### Step 3 — the frontend and the engine panel (`d07/frontend`), ~4 days
-`feat(demo)`: pages, the cost drawer, the engine panel, the load button. Checked by hand, with a
-short checklist in the commit body; a Playwright script is not worth its weight here.
+### Step 3 — the frontend, the trace view and the engine panel (`d07/frontend`), ~6 days
+1. `feat(demo)`: the pages, the engine panel and the load button.
+2. `feat(demo)`: the trace view (§1.4) — the five parts, compare, export and `/trace-gallery`.
+3. Checked by hand, with a checklist in the commit body; a Playwright script is not worth its
+   weight here. The checklist:
+   - each gallery trace shows exactly its JSON's numbers in all five parts;
+   - the deferred stage is dashed and says "estimate";
+   - a zero-work level is greyed, not hidden;
+   - a tampered trace (one level's count changed) shows the red banner;
+   - a checkout retried on `40001` shows both attempts;
+   - the Perfetto export opens in ui.perfetto.dev.
+
 **Done when:** the checklist passes in Chromium and Firefox.
 
 ### Step 4 — the scripts (`d07/scripts`), ~2 days
@@ -252,7 +353,16 @@ one-sentence answer.
 
 ### Step 6 — the README, write-ups, tour and retrospective (`d07/launch-docs`), ~5 days
 §3.1–§3.3, and a final pass over the FAQ and every guide, so that no answer still says "planned"
-for something that shipped. **Done when:** every README claim links to its evidence — a test, a
+for something that shipped. Also:
+- `architecture/d7-demo-and-trace-view.md`, the as-built explainer:
+  - Shelf's request path, from browser to pgjdbc to the server and back, with the cost notices
+    riding along;
+  - the trace view: how one trace becomes the five parts, the sum check, and the export;
+  - the crash demonstration's sequence;
+  - the test and checklist map;
+- glossary rows (`naming.md` §1): trace view, trace gallery, Shelf;
+- `guides/shaledb-quickstart.md` gains "See what a statement cost, drawn": open the demo, run an
+  action, read each of the five parts, compare two traces, and export one. **Done when:** every README claim links to its evidence — a test, a
 chart or an ADR — and every link resolves.
 
 ### Step 7 — the fresh-clone check (`d07/fresh-clone`), ~1 day
@@ -277,7 +387,8 @@ tag `v1.0`; a GitHub release. **Done when:** CI is green on the tag.
 - A fresh clone reaches a working demo in under five minutes (with JDK 25 only, or with Docker
   only).
 - `crash-demo.sh`: 20 of 20 seeds `PASS`, locally and in CI.
-- Every UI action shows its storage cost, from cost notices, with nothing executed twice.
+- Every UI action shows its statements' traces, drawn, from trace notices, with nothing executed
+  twice. The gallery draws every D6 golden trace with numbers identical to its JSON.
 - F1–F5 each have a chart and a one-sentence answer.
 - Every claim in the README links to its evidence.
 
@@ -288,6 +399,9 @@ Authentication in the app; a frontend framework; a public deployment; YCSB; perf
 
 ## References
 
-The application is original; its layers cite their own milestones. As models for explaining a
+The application is original; its layers cite their own milestones. The trace view borrows its
+plan layout from pev2 (Dalibo), its breakdown from Gregg's flame graphs ("The Flame Graph", CACM
+2016; the icicle layout), its LSM rows from LSM teaching diagrams such as BU's *Compactionary*
+(SIGMOD 2022), and its export from Perfetto's support for the Chrome trace-event format. As models for explaining a
 system briefly: the READMEs of LevelDB, mini-lsm and TigerBeetle. SQLite documentation, "Write-Ahead
 Logging"; PostgreSQL documentation, "CHECKPOINT".

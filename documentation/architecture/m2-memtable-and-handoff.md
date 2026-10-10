@@ -5,6 +5,10 @@ The detail behind the boxes added at M2 in the
 the code at tag `m2-skiplist`; see the [changelog entry](../../CHANGELOG.md#m2--skiplist-memtable-and-immutable-handoff--m2-skiplist), the decision
 in [ADR-0009](../adr/0009-skiplist-memtable.md).
 
+> **Since M3:** the `MemtableSet` record described here became `ReadView`
+> (`Shale.java`), which adds the SSTables beside the memtables. The publication mechanism, one
+> volatile write of an immutable record, is unchanged.
+
 M2's one sentence: **the memtable becomes a hand-written lock-free skiplist, and when it fills the
 engine freezes it and starts a new one — so reads no longer block writes.** Flushing those frozen
 memtables to disk is M3; until then they accumulate in memory.

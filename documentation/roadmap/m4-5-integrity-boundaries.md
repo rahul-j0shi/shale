@@ -4,7 +4,7 @@
 October 2026 engineering review. Baseline green on JDK 25 at `c66adea` (161 tests).
 **Depends on:** M4. **ADR:** [0024](../adr/0024-recovery-integrity-boundaries.md), already
 `Accepted`; this plan implements it. **Next:** [M5](m5-manifest-and-recovery.md).
-**Estimate:** 2–3 focused weeks, in 7 steps.
+**Estimate:** 2–3 focused weeks, in 8 steps (Steps 0–7).
 
 **Goal.** Recovery and every decoder decide only on bytes they have verified.
 - Today two different one-bit changes to a WAL fragment header make `open` succeed with every
@@ -126,6 +126,22 @@ Each step is one branch off `main`, merged green before the next starts. `Milest
 every `feat`/`fix`. **Every fix commit contains the regression that fails without it.** One patch
 may close several findings, but each finding keeps its own named test, so no fix can quietly
 stand in for another.
+
+### Step 0 — a bootstrap for every supported platform (`build/bootstrap-platforms`), ~½ day
+The guides promise Linux and macOS, but `scripts/bootstrap.sh` fetches a JDK for Linux x64 only.
+A newcomer on a Mac cannot follow the README's first command.
+1. `build(build)`: `bootstrap.sh` detects the OS and architecture (`uname -s`, `uname -m`) and
+   picks the pinned Temurin JDK 25 archive for `linux/x64`, `linux/aarch64`, `mac/x64` or
+   `mac/aarch64`. Each archive has its own pinned SHA-256, checked with `sha256sum` or
+   `shasum -a 256`, whichever exists. On macOS the JDK home is `Contents/Home` inside the archive.
+   Any other platform fails with a message naming the manual route (install JDK 25, set
+   `JAVA_HOME`).
+2. `build(ci)`: the workflow runs `bootstrap.sh` then `build` on `ubuntu-latest` and
+   `macos-latest`.
+3. `docs(docs)`: remove the "Linux x64 only" notes from the README, `CONTRIBUTING.md` and the
+   guide's §1.
+
+**Done when:** CI is green on both runners from a clean checkout.
 
 ### Step 1 — correct the claims in the code (`docs/m04-5-javadoc-claims`), ~½ day
 The markdown was corrected with this plan; the Javadoc must say the same.
@@ -280,8 +296,8 @@ green.
     - CRC is not authentication.
 - `package-info` for `dev.shale.internal.log`, with N9 citations: LevelDB `log_format.h` and
   `log_reader.cc`, SQLite's WAL frame header, PostgreSQL `XLogRecord`.
-- Glossary rows (`naming.md` §1): *torn tail*, *unwritten tail*, *unverifiable tail*, *header
-  checksum*, *log framing*.
+- Glossary rows (`naming.md` §1): *unwritten tail*, *unverifiable tail*, *header checksum*,
+  *log framing* (*torn tail* is already there).
 - [Bug log](../bug-log.md): move SH-08, SH-11, SH-13, SH-14, SH-15, SH-16 and SH-18 from the
   open register to full entries. Each entry gives:
   - finding;
