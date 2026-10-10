@@ -13,7 +13,7 @@ for advancing between milestones, and every one of them is a test result.
 | Unit | (none) | < 10 s total | Every build | ✅ M0 |
 | Model | `@Tag("model")` | ~1 min | Every build | ✅ M0 |
 | Property | `@Tag("property")` | ~2 min | Every build | ✅ M0 (untagged; runs in the default task) |
-| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); fault injection at M5 |
+| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); log-framing matrices at M4.5; fault injection at M5 |
 | Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag | ❌ M6 — needs compaction to be worth running |
 | Logic (ShaleDB) | (none; `.slt` files) | < 1 min | Every build | ❌ D2 — sqllogictest-style SQL suites and the differential query test |
 
@@ -66,7 +66,21 @@ deterministically:
   across files;
 - **fail one operation** with a real `IOException` (an fsync error, `ENOSPC`).
 
-Byte corruption is covered separately, by the bit-flip tests of every format.
+Byte corruption is covered separately, by three fixture families per format:
+
+| Family | Probes |
+|---|---|
+| Valid files and operation histories | semantics, and agreement with the documented format |
+| Bit and byte mutations with checksums left alone | that every checksum and exceptional branch fires |
+| Malformed structures with valid checksums | bounds, roles, arithmetic and structural invariants |
+
+The acceptance rule is not "every changed file throws". It is: invalid structure is rejected
+through `CorruptionException`, valid data decodes exactly, and no mutation silently changes the
+logical answer within the protection the format claims.
+
+**Name the failure model.** Every test, and every claim citing it, states which model it covers:
+clean restart, damaged bytes, torn tail, process death, simulated power loss or physical power
+loss (ADR-0024 §7). A pass in one never stands in for another.
 
 The core assertion is always the same: **no acknowledged write is lost, and the engine
 either opens correctly or reports `CorruptionException` — never both partly.**

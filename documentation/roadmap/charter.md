@@ -7,8 +7,8 @@ the working order of milestones is the [completion plan](completion-plan.md).
 ## 1. Why this exists
 
 **A database's real costs are hard to see, and hardest on LSM storage.** LSM engines now sit
-under most write-heavy databases (RocksDB under MyRocks, CockroachDB and TiKV; Cassandra;
-ScyllaDB), and their costs are deferred and indirect:
+under most write-heavy databases (RocksDB under MyRocks and TiKV; Pebble, a Go LSM modelled on
+RocksDB, under CockroachDB; Cassandra; ScyllaDB), and their costs are deferred and indirect:
 - write amplification is paid later, by compaction;
 - a delete leaves a tombstone that slows later scans;
 - a secondary index turns one `INSERT` into several writes, plus a read to check uniqueness.
@@ -33,11 +33,16 @@ memtable and table probes, bloom-filter skips, blocks read, dead versions skippe
 fsync it shared, and its estimated compaction debt. Its benchmarks connect storage design choices
 to the latency of SQL statements.
 
-**Why build every layer by hand.** Cost can only be attributed across layers you own. A system
-assembled from RocksDB and a borrowed SQL engine could not trace a statement through both without
-instrumenting them from the outside. Owning every layer — and understanding each one well enough to
-explain it — is the precondition for the product. The learning follows from that; it is not the
-excuse for it.
+**Why build every layer by hand.** Existing engines *can* be instrumented, and RocksDB's
+`perf_context` shows how far that goes. But a system assembled from RocksDB and a borrowed SQL
+engine would give per-layer fragments, joined from the outside, across codebases no one reads end
+to end. Owning every layer is what makes attribution exact *and* short enough to explain. It is
+not a technical necessity. Building each layer is also the learning, and that is a reason in its
+own right here, not an excuse (CLAUDE.md §1).
+
+**Exact versus estimated.** A statement's synchronous work — probes, blocks read, WAL bytes, the
+shared fsync — is counted exactly. The compaction work it defers is shared by many statements, so
+it is reported as an *estimate* under a declared model (D6 §2.1), never as an exact cost.
 
 ## 2. What it claims, and how each claim is proven
 
@@ -45,7 +50,7 @@ excuse for it.
 |---|---|
 | **Visible:** every statement's storage cost can be seen | `EXPLAIN ANALYZE` output, checked by tests against hand-computed costs |
 | **Measured:** storage choices are traced to SQL latency | Benchmarks: leveled vs size-tiered compaction, bloom bits per key, memtable size, group commit — each also run through the SQL workload, with RocksDB and SQLite as reference points |
-| **Durable:** no acknowledged write is ever lost | Crash tests at every byte and every file operation; a `kill -9` test against the running server; a model test against an in-memory oracle |
+| **Durable:** no acknowledged write is ever lost | Per failure model, never one standing in for another (ADR-0024 §7): truncation at every byte (torn tail); bit flips at every bit and malformed-structure fixtures (damaged bytes, M4.5); `FaultInjectionEnv` at every file operation (simulated power loss, M5); a `kill -9` test against the running server (process death, D5); a model test against an in-memory oracle (clean restart). Physical power loss is argued from fsync ordering, not tested |
 | **Correct:** transactions are serializable | Write-skew, lost-update and phantom tests; a serial-replay check over every tested schedule |
 | **Usable:** it behaves like a database | `psql` and the standard PostgreSQL JDBC driver connect; a CRUD application runs on it |
 
@@ -63,7 +68,8 @@ excuse for it.
 ## 4. Goals
 
 1. **Correctness first:** never lose or corrupt acknowledged data; property, model, crash and
-   serializability tests are gates, not extras.
+   serializability tests are gates, not extras. Every guarantee names the failure model its test
+   covers, and a planned guarantee is never presented as an implemented one.
 2. **Visibility:** per-statement cost accounting through every layer, with the counters a reader
    needs to reason about read, write and space amplification.
 3. **Measurement:** every performance statement in the README is a number with its method, not
@@ -102,6 +108,7 @@ the [completion plan](completion-plan.md); what shipped is in the [changelog](..
 | | Milestone | Yields |
 |---|---|---|
 | M0–M4 | *done* | SPI, key encoding, WAL, skiplist memtable, SSTables + flush, merge iterator |
+| M4.5 | Integrity boundaries | a checksum on every log header; recovery that classifies only verified bytes; validated decoders |
 | M5 | Manifest + recovery | the live file set as durable metadata; safe file deletion |
 | M5.5 | Concurrent write path | fsync outside the lock, group commit, background flush, write stalls |
 | M6 | Compaction | leveled, then size-tiered; amplification counters |

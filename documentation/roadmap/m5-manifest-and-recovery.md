@@ -1,7 +1,11 @@
 # M5 — Manifest and recovery: implementation plan
 
-**Status:** next to implement. Baseline green on JDK 25 at `9cfa7d6` (161 tests).
-**Depends on:** M4. **ADR:** 0012 (Step 1 writes it; this plan's §2 is what it records).
+**Status:** planned; starts after M4.5 is tagged (amended 2026-10-10 for the October 2026
+engineering review: SH-01, SH-02, SH-04, SH-05, SH-09, SH-10 are closed here; see the
+[completion plan §11](completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
+**Depends on:** M4.5 — log framing v2 in `dev.shale.internal.log`, the newest-segment tail rule, a
+segment synced when it is closed (ADR-0024). **ADR:** 0012 (Step 1 writes it; this plan's §2 is
+what it records).
 **Next:** [M5.5](m5-5-concurrent-write-path.md). **Estimate:** 3–4 focused weeks, in 9 steps.
 
 **Goal.** The set of live files comes from durable metadata (a manifest), not from listing the
@@ -19,10 +23,15 @@ harness that proves the durability claim under simulated power loss, not only pr
 | Flush: switch memtable + WAL segment, write `NNNNNN.sst.tmp`, force, atomic rename, delete old segment — no directory sync | `Shale.switchAndFlush`, `Shale.flushToSSTable` (`Shale.java:235-275`) |
 | Nothing ever deletes an SSTable; `SSTableReader.release()` at zero only closes the channel | `SSTableReader.release` |
 | `scan` reads the `volatile` view, then the cursor retains each table — a table can reach zero in between | `Shale.scan`, `ReconcilingCursor` constructor |
+| A cursor whose initial seek throws (e.g. a damaged block) keeps the references it retained; after ten such scans and `close()`, one channel stays open (SH-10) | `ReconcilingCursor` constructor |
+| `open` opens tables one by one; if a later table or the WAL replay throws, the tables already opened are never released — ten failed opens leave ten handles (SH-02) | `Shale.open` |
+| A flush that fails leaves its frozen memtable as the sole immutable; the next switch publishes a new sole immutable and drops it from the read view. Writes keep being accepted, and after reopen `get` and `scan` disagree about the same key (SH-01) | `Shale.switchAndFlush` (`Shale.java:246-250`) |
+| A `put` whose triggered flush fails throws `StorageException`, although the write was already logged and applied | `Shale.append` |
+| Names are written with `%06d`, but discovery matches exactly six digits, parses `substring(0, 6)` and sorts lexically: a database whose counter passes 999,999 loses its newer files on the second reopen (SH-09) | `Shale.java:60-61, 399-419` |
 | `close()` is not idempotent; `put`/`get`/`scan` after `close()` are not rejected; `EngineStateException` is never thrown | `Shale.close` |
 | No `LOCK` file: two engines can open one directory | — |
-| A WAL file of 1–15 bytes (a crash while writing a new segment's header) throws `CorruptionException` even under `TRUNCATE_TAIL` | `WalReader.readAll` |
-| A new WAL segment's header is not synced, and neither is its directory entry | `WalWriter.open` |
+| A new WAL segment's header is not synced, and neither is its directory entry; a flushed table's rename is not followed by a directory sync. So `SYNC` is not yet power-loss durable across a switch or a flush (SH-04) | `WalWriter.open`, `Shale.flushToSSTable` |
+| The log framing (v2, with a header checksum) is already in `LogWriter`/`LogReader`, and recovery accepts a torn tail only in the newest segment | `dev.shale.internal.log` (M4.5) |
 | `CorruptionException` has no file path (N4 asks for file, offset, expected, actual) | `CorruptionException` |
 | All file I/O calls `FileChannel`/`Files` directly, so no test can inject a crash between operations | `WalWriter`, `WalReader`, `SSTableWriter`, `SSTableReader`, `Shale` |
 
@@ -44,8 +53,9 @@ harness that proves the durability claim under simulated power loss, not only pr
 
 ### 2.2 Manifest format v1 (`dev.shale.manifest`, `format.md` written in Step 5)
 
-- **Framing:** the WAL's block framing (ADR-0007) — same 32 KiB blocks, fragments and CRC32C — with
-  its own file header: magic `0x5368616C654D414E` ("ShaleMAN", `fixed64LE`), `FORMAT_VERSION` 1,
+- **Framing:** log framing v2 (ADR-0024: 32 KiB blocks, fragments, a CRC32C over each fragment's
+  header and another over its payload) through M4.5's `LogWriter`/`LogReader`, with its own file
+  header: magic `0x5368616C654D414E` ("ShaleMAN", `fixed64LE`), `FORMAT_VERSION` 1,
   4 reserved zero bytes.
 - **Records:** one logical record = one `VersionEdit`, encoded as a sequence of `(tag, field)`
   pairs. Tags follow LevelDB's `version_edit.cc` numbering:
@@ -62,8 +72,9 @@ harness that proves the durability claim under simulated power loss, not only pr
 
 - **Validation:** an unknown tag, a field that overruns the record, or a level outside 0–6 is
   `CorruptionException`. Adding a tag later is a version bump.
-- **Tails:** a torn record at the very end of the manifest is dropped. It was never synced, so it
-  never took effect. Anything else is corruption.
+- **Tails:** classified by ADR-0024 §2. A torn record at the very end of the manifest is
+  dropped: it was never synced, so it never took effect. Anything else — a header or payload
+  checksum failure, or any damage before the end — is corruption.
 - **Tag 5** is written by M6. It is defined now so M6 needs no format change.
 - **Tag 7 carries each file's sequence range** (RocksDB's `FileMetaData` does the same; LevelDB
   does not). Once compaction writes new files, a file's number no longer says how new its data
@@ -90,7 +101,8 @@ harness that proves the durability claim under simulated power loss, not only pr
 4. **Open tables.** Open every table in the state. A missing one throws
    `CorruptionException("MANIFEST-N references missing table 000012.sst")`.
 5. **Replay the WAL.** Replay segments numbered ≥ the log number, in numeric order, with
-   `TRUNCATE_TAIL`, into one memtable.
+   `TRUNCATE_TAIL`, into one memtable. Only the newest may be torn (ADR-0024 §2); an unverifiable
+   v1 tail throws (ADR-0024 §3).
    - Last sequence = max(state, replayed).
    - Next file number = one past the largest number in the state *or in any file name present*,
      so an orphan's number is never reused.
@@ -110,6 +122,13 @@ harness that proves the durability claim under simulated power loss, not only pr
     open; it is never fatal.
 12. **Publish.** Publish the read view: an empty active memtable, no immutables, the Version.
 
+- **Rollback (SH-02).** Everything `open` acquires — `LOCK`, each `SSTableReader`, the manifest
+  writer, the new WAL writer — is added to one `List<AutoCloseable> acquired` as it is acquired.
+  If any step before 12 throws, `open` closes them in reverse order (suppressing secondary
+  failures onto the first) and rethrows. Ownership passes to the `Shale` instance only at step 12.
+- **A rejected open deletes no input** (ADR-0024 §4). Deletion happens only at step 11, after the
+  commit point. A table written by a failed attempt's step 6 is an orphan, deleted by the next
+  successful open.
 - **A crash before open step 9** leaves the old `CURRENT` authoritative. Anything written in open
   steps 6–8 is an orphan, deleted at the next open's step 11.
 - **A crash after open step 9** leaves the new state authoritative.
@@ -156,10 +175,17 @@ harness that proves the durability claim under simulated power loss, not only pr
 
 ### 2.6 Failure and close
 
-- **Failed state.** A field `failure` (guarded by `writeLock`). Once set, `put` and `delete` throw
-  `EngineStateException("engine failed; reopen to recover", failure)`. Reads keep serving the last
-  published view. The only way out is `close()` and reopen: recovery then rebuilds from durable
-  state.
+- **Failed state (SH-01).** A field `failure` (guarded by `writeLock`). Once set, `put` and
+  `delete` throw `EngineStateException("engine failed; reopen to recover", failure)`. Reads keep
+  serving the last published view, in which the frozen memtable is still visible. The only way
+  out is `close()` and reopen: recovery then rebuilds from durable state.
+  - **A retry in place is rejected.** Preserving every pending immutable across retries is
+    provable, but reopen gives the same result with no new state machine (ADR-0012 records it).
+- **The write that triggers a failing flush.** It is logged (to its durability mode) and applied
+  before the flush starts, so it **returns normally**: its own guarantee holds. The flush failure
+  sets the failed state, increments `engine.failed.count`, is logged at `ERROR`, and is reported
+  by the next write as the cause of its `EngineStateException`. A caller is never told that a
+  durable write failed. M5.5's background flush has the same contract by construction.
 - **Close.** `close()` is idempotent. It sets `closed`, closes the WAL, releases the VersionSet's
   current reference (files stay: nothing is obsolete), and releases `LOCK`.
   - After `close()`, `put`, `delete`, `get` and `scan` throw `EngineStateException("engine is
@@ -217,6 +243,9 @@ harness that proves the durability claim under simulated power loss, not only pr
       `to` back to `from` and restores the old target.
 
     Undo runs newest-first, and file truncation runs after it.
+  - **Open handles.** `openHandles()` counts the `WritableFile`s and `ReadableFile`s it handed out
+    and that are not yet closed, so a test can assert that a failed `open` or `scan` returns to
+    its baseline (SH-02, SH-10) without reading `/proc`.
   - **I/O failure.** `failOn(opIndex, IOException)` makes one operation throw a real I/O error, to
     test the failed state.
 
@@ -250,7 +279,12 @@ Each step is one branch off `main`, merged green before the next starts. Commit 
    - a manifest rewritten whole on every change (rejected: O(state) per flush);
    - `CURRENT` rewritten per edit (rejected: an extra rename and directory sync per flush);
    - an in-memory simulated filesystem for crash tests (rejected: a second filesystem to get
-     right; truncating real append-only files models power loss exactly).
+     right; truncating real append-only files models power loss exactly);
+   - retrying a failed flush in place (rejected: §2.6).
+
+   It **amends ADR-0008's power-loss claim**: `SYNC` is power-loss durable once the record is
+   forced *and* every directory entry it depends on (its segment; after a flush, its table) is
+   synced. Set ADR-0008's status line accordingly (ADR process step 6).
 
    It also lists the public API and behaviour changes: `ShaleOptions`; the public `Env` SPI;
    `close()` semantics;
@@ -286,7 +320,8 @@ in `shale-core/src/main` finds only `PosixEnv`.
    - an unsynced create or rename is undone, a synced one stays;
    - a delete not followed by a directory sync is undone;
    - `crashAt(n)` throws at exactly operation *n*;
-   - `TORN` mode keeps a seeded prefix.
+   - `TORN` mode keeps a seeded prefix;
+   - `openHandles()` rises on open and returns to its baseline on close.
 
 **Done when:** `FaultInjectionEnvTest` is green.
 
@@ -297,30 +332,34 @@ One `fix` commit each, each with the test that fails without it:
    `crash`) — `SYNC` puts, then a crash and power loss at every operation index, then reopen:
    every acknowledged write is present. It fails before this fix, because neither the new
    segment's header nor its directory entry is synced (§1).
-2. **A torn segment header is a torn tail.** Under `TRUNCATE_TAIL`, a 1–15-byte segment is
-   empty; under `STRICT` it throws. Test: `WalTest` truncates a fresh segment at every offset
-   0–15.
+2. *(Moved to M4.5 Step 5: a torn segment header is a torn tail in the newest segment.)*
 3. **Flush syncs the directory after the rename.** Test: `ShalePowerLossTest` covers a flush.
 4. **`close()` is idempotent; later calls throw.** Test: `ShaleLifecycleTest` — double close;
    `put`/`delete`/`get`/`scan` after close throw `EngineStateException`; a cursor opened before
    close still reads.
 5. **`LOCK`.** Test: a second `open` on the same directory throws `EngineStateException`; after
    `close()`, open succeeds.
-6. **File numbers past six digits.** Names parse as `\d{6,}` and sort numerically, as `long`.
-   Test: a directory with `999999.sst` and `1000000.sst` opens with both, in the right order.
+6. **File numbers past six digits (SH-09).** Names parse as `\d{6,}` and sort numerically, as
+   `long`. Tests (`ShaleFileNumberTest`):
+   - **the review's rollover history:** `SYNC`-write `K`, close, rename `000001.wal` to
+     `999999.wal`, then reopen twice. `K` is present after both reopens (today it is lost on the
+     second);
+   - `999998.sst`, `999999.sst` and `1000000.sst` open in numeric order;
+   - a name that does not match (`12345.sst`, `000001.sst.bak`) is not an engine file: it is
+     left alone and never parsed;
+   - a counter that would pass `Long.MAX_VALUE` throws `EngineStateException`, not a wrapped
+     number.
 7. **`CorruptionException` names the file.** Add a `Path` constructor and use it in `WalReader`
    and `SSTableReader`. Test: `CorruptionExceptionTest` checks the message contains the file name.
 
-**Done when:** all seven tests pass; `build crashTest` green.
+**Done when:** the six remaining tests pass; `build crashTest` green.
 
 Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) already records.
 
 ### Step 5 — the manifest format (`m05/manifest-format`), ~3 days
 1. `docs(manifest)`: `manifest/format.md` — header, record layout, the tag table, a worked hex
    example of one new-file edit, and the version history.
-2. `refactor(wal)`: extract the framing into `LogWriter`/`LogReader` (magic and version are
-   parameters); `WalWriter`/`WalReader` delegate. `GoldenWalTest` stays green — the proof the
-   bytes did not change.
+2. *(The framing extraction is done: M4.5 Step 4 created `LogWriter`/`LogReader`.)*
 3. `feat(manifest)`: `VersionEdit`, `VersionEditCodec`, `ManifestWriter`, `ManifestReader`,
    `CurrentFile`.
 4. `test(manifest)`:
@@ -328,7 +367,8 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
    - `VersionEditCodecTest`: unknown tag, overrunning field, level out of range;
    - `CurrentFileTest`: valid, missing newline, garbage;
    - `GoldenManifestTest`: fixture `golden/manifest/v1/three-edits.manifest` and its `.json`;
-   - a bit-flip test at every offset.
+   - a bit-flip test at every **bit** of the golden: every case throws `CorruptionException`
+     (log framing v2 leaves no unchecked byte).
 
    Commit with `Format-Change: manifest v1 — new file` and `Reversible: no`.
 
@@ -368,7 +408,18 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
    - an orphan `.sst` not in the manifest is deleted at open;
    - manifest rollover past `manifestRolloverBytes` keeps every file;
    - an injected I/O failure during flush → writes throw `EngineStateException`, reads still work;
-     reopen recovers every acknowledged write.
+     reopen recovers every acknowledged write;
+   - **SH-01, the review's history:** a 1,000-byte write buffer; `SYNC` A and B (100-byte values);
+     `failOn` the next table's creation; a 2,000-byte write triggers the flush and **returns
+     normally**; the following `SYNC` update of A throws `EngineStateException`; `get` and `scan`
+     agree on A and B before close, and again after reopen, and the 2,000-byte write is present;
+   - **SH-02:** a valid table followed by a corrupt one; `open` throws ten times;
+     `openHandles()` is back to its baseline after each;
+   - **SH-10:** flush a table, damage a data block, ten `scan`s throw `CorruptionException`; after
+     `close()`, `openHandles()` is at baseline; a scan over an undamaged range still works before
+     the close;
+   - **a rejected open deletes nothing:** a corrupt manifest record, and an unverifiable v1 WAL
+     tail beside a manifest, leave every file name and byte unchanged except `*.tmp`.
 
 **Done when:** these tests, plus every existing model, crash and concurrency test, pass.
 
@@ -378,6 +429,9 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
    - **Workloads:**
      - `SYNC` puts;
      - puts forcing two flushes;
+     - a record fragmented across three blocks written just before a switch (rotation with
+       fragmentation, SH-05);
+     - a flush failed by `failOn`, then a crash and reopen (failure, then recovery, SH-05);
      - a flush that triggers manifest rollover;
      - reopen of a database with unflushed WAL (a crash *during recovery*, then reopen again).
    - **Assertions:**
@@ -385,12 +439,21 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
      - nothing appears that was never written;
      - no duplicate internal key across live tables;
      - a reopen that follows `crashAt` then `dropUnsyncedData` never throws
-       `CorruptionException`.
-2. `docs(docs)`: `concurrency-and-resources.md` §5 — the power-loss row becomes "simulated by
-   `FaultInjectionEnv`: unsynced data dropped at every operation index", replacing "asserted by
-   construction".
+       `CorruptionException`;
+     - `get` and `scan` agree on every key after every reopen.
+2. `test(recovery)`: `EngineMetamorphicTest` (tag `model`, after Pebble's metamorphic tests). One
+   seeded history of puts, deletes and overwrites runs under each of:
+   - write buffer 96 bytes and 4 MiB;
+   - the skiplist and the tree memtable;
+   - no restarts, and a clean reopen every 40 operations.
 
-**Done when:** the matrix is green for a fixed seed in CI and for 20 seeds locally.
+   Every configuration must give the same `get` and `scan` results as the `TreeMap` oracle, and as
+   each other.
+3. `docs(docs)`: `concurrency-and-resources.md` §5 — the simulated-power-loss row becomes "tested by
+   `FaultInjectionEnv`: unsynced data and unsynced directory entries dropped at every operation
+   index". Physical power loss stays "argued, not tested" (ADR-0024 §7).
+
+**Done when:** the matrix is green for a fixed seed in CI and for 20 seeds locally, and `EngineMetamorphicTest` is green.
 
 ### Step 9 — documentation and the tag (`m05/docs`), ~2 days
 - `package-info` for `env`, `internal.log` and `manifest` (threading, ownership, N9
@@ -399,13 +462,17 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
   `FileMetadata`, `CURRENT`, log number.
 - `architecture/m5-manifest-and-recovery.md`: the open sequence, the flush sequence with every
   sync marked, the Version ownership diagram, and the test map. Validate the Mermaid.
-- README status, a `CHANGELOG.md` entry, the completion plan's status table.
+- README status, a `CHANGELOG.md` entry, the completion plan's status table and §11 rows.
+- [Bug log](../bug-log.md): SH-01, SH-02, SH-04, SH-09 and SH-10 move from the open register to
+  entries (finding → commit → command → output → remaining limitation).
 - `guides/embedding-shale.md`:
   - `ShaleOptions` and `open(dir, options, …)` in the API section;
   - `CURRENT`, `MANIFEST-*` and `LOCK` in the on-disk table;
   - the closed and failed states in the errors table (`EngineStateException`);
   - the migration of an M4 directory;
-  - the limitations table loses its `LOCK`, `close` and safe-deletion rows.
+  - the limitations table loses its `LOCK`, `close`, safe-deletion, failed-flush, leaked-handle,
+    file-number and power-loss rows;
+  - §5's durability table says `SYNC` survives power loss, with the matrix named as its test.
 
   The FAQ's two-processes answer loses "before M5".
 - **Reconciliation pass for M5.5:** update its plan to name the types M5 actually shipped
@@ -422,6 +489,9 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
   file (`ShaleManifestRecoveryTest`, `CorruptionExceptionTest`).
 - Lifecycle: idempotent close, rejection after close, `LOCK`, failed state
   (`ShaleLifecycleTest`, `ShaleManifestRecoveryTest`).
+- **The review's M5 findings are closed by their own regressions:** SH-01, SH-02 and SH-10
+  (`ShaleManifestRecoveryTest`), SH-04 (`ShalePowerLossTest`, `ShaleCrashMatrixTest`), SH-09
+  (`ShaleFileNumberTest`), SH-05 (the matrix's new workloads, `EngineMetamorphicTest`).
 - Every existing test stays green.
 
 ## 6. Not in M5

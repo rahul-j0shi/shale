@@ -10,6 +10,13 @@ ordered stream, and a cursor reconciles that stream into what a reader sees — 
 result instead of the whole database.** Snapshot filtering is M7; the manifest that will delete the
 tables this cursor pins is M5.
 
+**What a cursor guarantees.** Pinning tables gives a *stable set of sources*, not a *logical
+snapshot*. The cursor reads the live active memtable, so a key inserted after the cursor opened can
+appear in it. The cursor is **weakly consistent** until M7 captures a sequence number at `scan`
+(SH-03). **And what a scan costs:** source setup is part of it. Each table's iterator seeks its
+lower bound, loading one data block per table even when the range is empty (SH-17), until M6
+selects tables by key range.
+
 ---
 
 ## 1. In the whole project — why this milestone matters

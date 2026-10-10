@@ -29,6 +29,9 @@ next week, or anything already decided by an existing ADR.
 5. Never edit or delete an accepted ADR. To change a decision, write a new one and set
    the old one to `Superseded by NNNN`. The history of wrong turns is the most valuable
    part of the record.
+6. When a later ADR changes only *part* of a decision, the one edit allowed to the old
+   record is its status line: `Accepted — amended by ADR-NNNN: <what changed>`. The body
+   stays as written, wrong turns included.
 
 ## Index
 
@@ -39,17 +42,20 @@ next week, or anything already decided by an existing ADR.
 | 0004 | Internal key encoding | Accepted | **no** |
 | 0005 | Little-endian fixed-width integers | Accepted | **no** |
 | 0006 | Define the StorageBackend SPI | Accepted | **no** |
-| 0007 | Block-structured log format for the WAL | Accepted | **no** |
-| 0008 | Durability modes, group commit, and an injected clock | Accepted | partly |
+| 0007 | Block-structured log format for the WAL | Accepted, amended by 0024 | **no** |
+| 0008 | Durability modes, group commit, and an injected clock | Accepted, qualified by 0024 | partly |
 | 0009 | Skiplist memtable: single writer, lock-free readers, on-heap | Accepted | partly |
-| 0010 | SSTable on-disk format: a LevelDB block table, uncompressed | Accepted | **no** |
+| 0010 | SSTable on-disk format: a LevelDB block table, uncompressed | Accepted, amended by 0024 | **no** |
 | 0011 | Read through one InternalIterator seam, merged by a heap, pinned by the cursor | Accepted | partly |
 | 0013 | ShaleDB: a see-through database — purpose, scope, modules and dependencies | Accepted | yes |
+| 0024 | Protect the log framing, and let recovery decide only on verified bytes | Accepted | **no** |
 
 **0003** (the original module layout) was withdrawn when ADR-0013 replaced it. **0012 is
 reserved** for the M5 manifest and recovery decision
 ([plan](../roadmap/m5-manifest-and-recovery.md)), and **0014–0023** for the milestones after it;
 the [completion plan](../roadmap/completion-plan.md#6-the-decision-records-each-milestone-writes)
-lists which milestone writes which.
+lists which milestone writes which. **0024** (M4.5) was accepted ahead of its milestone, in the
+planning change that responded to the October 2026 engineering review, because both the
+[M4.5 plan](../roadmap/m4-5-integrity-boundaries.md) and M5's manifest framing depend on it.
 
 Keep this table current in the same commit that adds the ADR.

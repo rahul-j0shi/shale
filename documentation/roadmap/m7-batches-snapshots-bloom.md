@@ -94,10 +94,11 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
   steps 6–8 of M5.5 §2.1). It completes exceptionally with `EngineStateException` on failure.
 - **`write`** is `writeAsync(...).join()`, unwrapping the exception.
 
-### 2.3 WAL format version 2
+### 2.3 WAL format version 3
 
 - **Where the version lives.** The version is in each segment's header (`wal/format.md` §1). A
-  segment written by M7 has `FORMAT_VERSION` 2, and **every logical record in it is one batch**:
+  segment written by M7 has `FORMAT_VERSION` 3. It keeps log framing v2 (ADR-0024: a checksum
+  over each fragment header), and **every logical record in it is one batch**:
 
   | Field | Encoding |
   |---|---|
@@ -106,17 +107,22 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
   | each entry | type (1 byte: 1 = put, 0 = delete — `ValueType`'s codes), varint32 key length, key, and for a put: varint32 value length, value |
 
   Entry *i* has sequence base + *i*.
-- **Old segments still work.** Replay dispatches on the segment's header version: v1 segments
-  replay as one mutation per record, as today.
+- **Old segments still work.** Replay dispatches on the segment's header version: v1 and v2
+  segments replay as one mutation per record (v1 under ADR-0024's conservative tail rule).
+- **Lengths and counts follow ADR-0024 §6:** decoded wide, checked against the remaining bytes by
+  subtraction, and the record consumed exactly.
 - **Torn and corrupt records.** A batch is one logical record, and the CRC covers every fragment,
   so a torn batch is dropped whole (`TRUNCATE_TAIL`). A count or length that overruns the record
   is `CorruptionException`.
 
 ### 2.4 Visibility and snapshots
 
-- **Default reads** read at `visibleSequence`: `get` seeks `(userKey, visibleSequence)`, and the
-  cursor ignores entries above it. A reader can therefore never see part of a group, or part of a
-  batch.
+- **Default reads** read at `visibleSequence`, **read once when the operation starts**: `get`
+  seeks `(userKey, visibleSequence)`. A default cursor captures `visibleSequence` at `scan` and
+  ignores every entry above it for its whole life. A reader can therefore never see part of a
+  group, or part of a batch, and a cursor sees the database as it was when it was opened. This is
+  the snapshot semantics the M4 guide wrongly claimed (SH-03); until M7 a cursor is weakly
+  consistent.
 - **`snapshot()`**:
   - registers `visibleSequence` in a `SnapshotRegistry` — a `TreeMap<Long, Integer>` of sequence
     → count, under its own lock;
@@ -141,7 +147,9 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
 | Counter | Incremented when |
 |---|---|
 | `memtablesProbed` | `get` probes a memtable |
-| `tablesProbed` | `get` calls `ceiling` on an SSTable |
+| `tablesConsidered` | a read looks at a table in its Version (before range selection or a filter) |
+| `tablesSkippedByRange` | range selection excludes a table: its key range cannot hold the key, or cannot meet the scan's range (M6 §2.2) |
+| `tablesProbed` | `get` calls `ceiling` on an SSTable, or `scan` builds an iterator over one |
 | `filterSkips` | a bloom filter rules a table out (part 2) |
 | `blocksRead`, `bytesRead` | an SSTable data block is read and verified |
 | `entriesVisited` | a cursor or lookup examines an internal entry |
@@ -197,21 +205,21 @@ Cursor scan(byte[] fromInclusive, byte[] toExclusive, ReadOptions options);
 
 **Done when:** merged.
 
-### Step 2 — `WriteBatch` and WAL v2 (`m07/write-batch`), ~4 days
-1. `docs(wal)`: `wal/format.md` — v2 record layout, a worked hex example of a two-entry batch, the
+### Step 2 — `WriteBatch` and WAL v3 (`m07/write-batch`), ~4 days
+1. `docs(wal)`: `wal/format.md` — v3 record layout, a worked hex example of a two-entry batch, the
    version history.
-2. `feat(wal)`: `WriteBatch`, `WriteBatchCodec`; the writer thread writes v2 segments with one
+2. `feat(wal)`: `WriteBatch`, `WriteBatchCodec`; the writer thread writes v3 segments with one
    record per batch; replay dispatches on version.
 3. `test(wal)`:
-   - the golden `golden/wal/v2/two-entry-batch.wal` and its `.json`;
-   - `GoldenWalTest` still reads the v1 golden;
+   - the golden `golden/wal/v3/two-entry-batch.wal` and its `.json`;
+   - `GoldenWalTest` still reads the v1 and v2 goldens;
    - a round-trip property over random batches;
-   - bit-flip at every offset of the v2 golden;
+   - bit-flip at every bit of the v3 golden: every case throws `CorruptionException`;
    - a count or length overrun is corruption.
-4. `test(recovery)`: `ShaleCrashTest` — a new test truncates a v2 segment holding three batches at
+4. `test(recovery)`: `ShaleCrashTest` — a new test truncates a v3 segment holding three batches at
    every byte offset. Recovery holds whole batches, never part of one.
 
-Commit the format with `Format-Change: wal v2 — one batch per record` and `Reversible: no`.
+Commit the format with `Format-Change: wal v3 — one batch per record` and `Reversible: no`.
 **Done when:** these pass; existing tests green.
 
 ### Step 3 — the public write API (`m07/write-api`), ~2 days
@@ -238,7 +246,9 @@ Commit the format with `Format-Change: wal v2 — one batch per record` and `Rev
      flush, and after a compaction;
    - closing it lets the next compaction drop the shadowed versions (`bytes.compaction.written`
      shrinks accordingly);
-   - `close()` twice is harmless.
+   - `close()` twice is harmless;
+   - **SH-03, the review's history:** write `A` and `Z`, open a default cursor, insert `M`, then
+     advance: the cursor returns exactly `A`, `Z`.
 3. `test(api)`, `ShaleBatchVisibilityTest`:
    - with syncs held on a group of two batches, readers see neither;
    - after release, readers see both, and never one without the other (a reader thread samples
@@ -252,6 +262,8 @@ Commit the format with `Format-Change: wal v2 — one batch per record` and `Rev
    numbers go in the merge commit body.
 3. `test(api)`, `OperationStatsTest`, with exact expected counts:
    - a key in L2 under two memtables and three overlapping L0 tables;
+   - the review's SH-17 layout of 128 non-overlapping tables: an empty scan and a missing key each
+     report `tablesConsidered` = 128, `tablesSkippedByRange` = 128, `blocksRead` = 0;
    - a scan over 100 keys, 30 of them deleted: `tombstonesSkipped` = 30;
    - a scan at a snapshot with 10 newer versions present: `newerThanSnapshotSkipped` = 10.
 
@@ -303,7 +315,8 @@ Commit with `Format-Change: sstable v2 — filter block` and `Reversible: no`. *
 ## 6. Milestone acceptance gates
 
 - **Atomic batches:** whole or absent at every crash offset and to every reader.
-- **Snapshots:** exact pre-state across flush and compaction; retention released on close.
+- **Snapshots:** exact pre-state across flush and compaction; retention released on close; a
+  default cursor never sees a write made after it opened (SH-03 closes here).
 - **Order:** `writeAsync` order = sequence order.
 - **Statistics:** exact counts in scripted scenarios; negligible cost when unused.
 - **Filters:** no false negatives; false-positive rate within 15% of theory; old tables still

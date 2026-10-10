@@ -1,6 +1,6 @@
 # 0007. Block-structured log format for the WAL
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [ADR-0024](0024-recovery-integrity-boundaries.md): v2 framing adds a header checksum, and recovery classifies a tail only from verified bytes
 - **Date:** 2026-07-28
 - **Milestone:** M1
 - **Reversible:** no — this is the byte layout of every write-ahead log segment; changing it after the first tagged M1 release makes existing logs unreadable.

@@ -80,8 +80,22 @@ F3 27 F3 CC               crc32c(type ‖ payload)   [pinned by the golden file]
 
 The CRC bytes above are fixed by the committed golden file
 `shale-core/src/test/resources/golden/wal/v1/single-put.wal` and its `.json` sibling; the
-golden test decodes it and asserts the logical contents, and a bit-flip-at-every-offset test
-asserts every corruption is detected (`on-disk-formats.md` §3, §4).
+golden test decodes it and asserts the logical contents (`on-disk-formats.md` §4).
+
+**No bit-flip test exists for v1.** Until 2026-10-10 this page claimed one. Its absence hid two
+faults; see §5a.
+
+## 5a. Known limitation of v1 (ADR-0024)
+
+The fragment CRC covers `type ‖ payload`, not `length`, and the reader decides "torn tail" from
+fields the CRC does not cover:
+- a `FULL` → `ZERO` type bit skips the block before any CRC check (SH-08);
+- a length bit that pushes the payload past the end of the file is read as a torn tail (SH-18).
+
+Either way, recovery succeeds without acknowledged records. A payload CRC cannot settle the
+length case, because the claimed payload is not in the file. M4.5 adds a header checksum
+(v2), and reads v1 under a conservative rule: a complete v1 header with a short payload is an
+*unverifiable tail* and fails `open`, rather than being dropped.
 
 ## 6. Rationale
 
@@ -93,4 +107,5 @@ WAL, memtable, and SSTable share one key format.
 
 | Version | Milestone | Status  | Change                          |
 |---------|-----------|---------|---------------------------------|
-| 1       | M1        | current | Initial block-structured format |
+| 1       | M1        | current; *readable only* from M4.5 | Initial block-structured format |
+| 2       | M4.5      | planned | 4-byte CRC32C over each fragment header (ADR-0024) |
