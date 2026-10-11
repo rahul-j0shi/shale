@@ -1,7 +1,9 @@
 # M4.5 — Integrity boundaries: implementation plan
 
-**Status:** next to implement. It was inserted before M5 on 2026-10-10, in response to the
-October 2026 engineering review. Baseline green on JDK 25 at `c66adea` (161 tests).
+**Status:** ✅ done (2026-10-11; 18 commits, 161 → 279 tests; tag `m4.5-integrity` once merged).
+It was inserted before M5 on 2026-10-10, in response to the October 2026 engineering review. What
+shipped is the [as-built case study](../architecture/m4-5-integrity-boundaries.md); where it
+differs from this plan, the notes below say so.
 **Depends on:** M4. **ADR:** [0024](../adr/0024-recovery-integrity-boundaries.md), already
 `Accepted`; this plan implements it. **Next:** [M5](m5-manifest-and-recovery.md).
 **Estimate:** 2–3 focused weeks, in 8 steps (Steps 0–7).
@@ -101,7 +103,7 @@ enough → the format decision → regressions and controls → the limits that 
 | `Varints.get` | The tenth byte must be 0 or 1. A larger value is `CorruptionException("varint overflows 64 bits")`. |
 | `Varints.getUnsigned32` (new) | Decodes like `get`, but rejects values ≥ 2^32. Every field the formats call `varint32` uses it. |
 | `WalRecordCodec.decode` | Each length is checked with `length <= payload.length - start` while still a `long`, then narrowed. After the value, `start + valueLength` must equal `payload.length`; trailing bytes are corruption. |
-| `Block` | `restartCount` must lie in `[0, (length − 4) / 4]` before any multiplication. Restart offsets must lie in `[0, restartArrayOffset)`, strictly increase, start at 0, and point at entries with `shared == 0`. A block with `restartCount == 0` must have an empty entry region: that is the writer's empty block. |
+| `Block` | `restartCount` must lie in `[0, (length − 4) / 4]` before any multiplication. Restart offsets must lie in `[0, restartArrayOffset)`, strictly increase, start at 0, and point at entries with `shared == 0`. An empty entry region holds no restarts, or the single restart 0 that the writer's empty block carries. *(Corrected while building: this plan first said a zero-count block must be the writer's empty block, but the writer emits one restart at 0.)* |
 | `BlockHandle`, `SSTableReader.readBlock` | `offset ∈ [0, fileSize]`; `size ∈ [0, fileSize − offset − 5]`, computed by subtraction on `long`s, so no `toIntExact` can throw. |
 | `SSTableReader.open` (v1 layout) | Let *F* = file size − 52, where the footer starts. Then `index.offset + index.size + 5 == F`; `metaindex.offset + metaindex.size + 5 == index.offset`; and every data handle in the index ends at or before `metaindex.offset`, in increasing offset order. |
 | everywhere | Each known malformation throws `CorruptionException` with field, offset, expected and actual. **No `catch (RuntimeException)`** wraps a decoder. |
@@ -114,7 +116,7 @@ enough → the format decision → regressions and controls → the limits that 
 | `WalWriter` | `dev.shale.wal` | writes v2 segments; `close()` syncs; delegates to `LogWriter` | 4, 5 |
 | `WalReader` | `dev.shale.wal` | unchanged `readAll` signature; dispatches on the header version; delegates to `LogReader` | 4 |
 | `WalFormat` | `dev.shale.wal` | `FORMAT_VERSION` 2, with `READABLE_VERSIONS = {1, 2}` | 4 |
-| `RecordType` | `dev.shale.wal` | `ZERO` stays for v1 decoding only; v2 rejects it | 3, 4 |
+| `RecordType` | moved to `dev.shale.internal.log` with the framing (as in LevelDB's `log_format.h`) | `ZERO` is never written; a reader meets it only at the start of an all-zero tail | 3, 4 |
 | `Varints` | `dev.shale.internal.coding` | adds `getUnsigned32`; `get` bounds the tenth byte | 3 |
 | `WalRecordCodec` | `dev.shale.wal` | contextual lengths; exact consumption | 3 |
 | `Block`, `BlockHandle`, `Footer`, `SSTableReader` | `dev.shale.sstable` | structural validation (§2.4); no API change | 6 |
@@ -162,7 +164,8 @@ The markdown was corrected with this plan; the Javadoc must say the same.
 
 ### Step 2 — capture the v1 fixtures (`m04-5/v1-fixtures`), ~1 day
 v1 goldens must be written by the v1 writer, so they are captured **before** Step 4 changes it.
-1. `test(wal)`: `WalV1FixtureGenerator`, a test-source `main` run once, writes:
+1. `test(wal)`: `WalFixtureGenerator`, a test-source `main` run once per format version with the
+   then-current writer, writes these from the contents defined in `WalFixtures`:
    - `golden/wal/v1/two-puts.wal`: `A`→`ack-A`, `B`→`ack-B`, `SYNC`, sequences 1–2. This is the
      review's fixture: 62 bytes, the first fragment header at offset 16, its length at 20–21, its
      type at 22.

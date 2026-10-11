@@ -7,7 +7,7 @@ the [charter](../roadmap/charter.md); the order it is built in is the
 [completion plan](../roadmap/completion-plan.md).
 
 **Legend:** solid box / `✓ Mn` = in the code now, built at milestone *Mn*. Dashed box + a
-milestone = planned and not yet written. Today `shale-core` is built through M4, `shale-bench`
+milestone = planned and not yet written. Today `shale-core` is built through M4.5, `shale-bench`
 is an empty harness, and the ShaleDB modules do not exist yet.
 
 ### 1 · Modules, dependency direction, and the build gate
@@ -18,7 +18,7 @@ flowchart TB
     demo["shale-demo — the CRUD app · trace view · engine panel · D7<br/>a client like any other: PostgreSQL JDBC driver"]:::plan
     server["shale-server — PostgreSQL wire protocol · sessions · D5"]:::plan
     sdb["shale-db — record layer · catalog · SQL · planner · executor · transactions · cost accounting · D1-D6"]:::plan
-    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator ; M4.5-M7: integrity checks · manifest · write path · compaction · batches · snapshots · bloom"]:::part
+    core["shale-core — LSM engine · JDK-only (N1)<br/>✓ M0-M4.5: SPI · encoding · WAL · skiplist · SSTable + flush · merge iterator · integrity checks ; M5-M7: manifest · write path · compaction · batches · snapshots · bloom"]:::part
     bench["shale-bench — JMH · db_bench-style workloads · RocksDB and SQLite as reference baselines · M5.5, M8, D7"]:::plan
   end
   demo -->|"PostgreSQL protocol (no code dependency)"| server
@@ -35,7 +35,7 @@ flowchart TB
 ```
 
 Every module depends inward only, and the arrows are enforced in each module's
-`build.gradle.kts`, not by convention. `shale-core` is built through M4 (dashed border: M5–M7
+`build.gradle.kts`, not by convention. `shale-core` is built through M4.5 (dashed border: M5–M7
 remain). `shale-db` and `shale-server` carry zero runtime dependencies, like the engine. The demo
 and the benchmark baselines are the two deliberate exceptions (ADR-0013).
 
@@ -57,7 +57,7 @@ flowchart TB
   end
 
   subgraph wpath["Write path"]
-    wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · header CRC M4.5 · group commit M5.5 · batch records M7"]:::done
+    wal["WAL ✓ M1<br/>WalSegment · len + CRC32C + type + payload<br/>fsync = DURABILITY point · ✓ header CRC M4.5 · group commit M5.5 · batch records M7"]:::done
     mem["Memtable ✓ M2 lock-free skiplist"]:::done
     imm["Immutable Memtable(s) ✓ M2 switch · ✓ M3 flush drains to SSTable"]:::done
   end
@@ -177,7 +177,7 @@ flowchart LR
     unit["Unit ✓ M0"]:::done
     modelt["Model vs TreeMap ✓ M0"]:::done
     prop["Property · jqwik ✓ M0"]:::done
-    crash["Crash · ✓ M1 WAL truncation · log framing matrices M4.5 · simulated filesystem M5"]:::part
+    crash["Crash · ✓ M1 WAL truncation · ✓ M4.5 log framing matrices · simulated filesystem M5"]:::part
     soak["Soak M6"]:::plan
     logic["Logic tests · .slt + differential queries D2"]:::plan
     serial["Serializability · anomaly schedules + serial replay D4"]:::plan

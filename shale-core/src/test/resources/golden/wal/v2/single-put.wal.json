@@ -1,0 +1,9 @@
+{
+  "format": "wal",
+  "formatVersion": 2,
+  "description": "One PUT, key -> v at sequence 1: the worked v2 fragment of internal/log/format.md §4 (headerCrc 1E D1 FE C4).",
+  "fileBytes": 41,
+  "fragments": [{ "offset": 16, "payloadBytes": 14, "type": "FULL" }],
+  "recordEndOffsets": [41],
+  "records": [{ "userKey": "key", "sequenceNumber": 1, "valueType": "PUT", "value": "v" }]
+}

@@ -1,23 +1,26 @@
 package dev.shale.wal;
 
 import dev.shale.internal.annotations.ThreadSafe;
+import dev.shale.internal.log.LogFormat;
+import java.util.Set;
 
-/** WAL on-disk constants (ADR-0007, {@code format.md}). */
+/**
+ * WAL on-disk constants ({@code format.md}). The blocks and fragments are the shared log framing
+ * ({@link LogFormat}); the WAL owns its magic and which versions it writes and reads.
+ */
 @ThreadSafe
 final class WalFormat {
 
   /** {@code fixed64LE} at offset 0 of every segment: "ShaleWAL". */
   static final long MAGIC = 0x5368616C6557414CL;
 
-  static final int FORMAT_VERSION = 1;
+  /** The version this build writes: the log framing version (internal/log/format.md). */
+  static final int FORMAT_VERSION = LogFormat.VERSION_2;
 
-  /** magic(8) + version(4) + reserved(4). */
-  static final int FILE_HEADER_SIZE = 16;
+  /** Every version this build reads: v1 segments written before M4.5 still replay. */
+  static final Set<Integer> READABLE_VERSIONS = Set.of(LogFormat.VERSION_1, LogFormat.VERSION_2);
 
-  static final int BLOCK_SIZE = 32768;
-
-  /** crc32c(4) + length(2) + type(1). */
-  static final int FRAGMENT_HEADER_SIZE = 7;
+  static final int FILE_HEADER_SIZE = LogFormat.FILE_HEADER_SIZE;
 
   private WalFormat() {}
 }

@@ -32,13 +32,13 @@ Every page has the same four parts, in order:
 | M2 | [m2-memtable-and-handoff.md](m2-memtable-and-handoff.md) | Write path + memtable switch, cross-memtable reads, recovery | Skiplist structure, safe publication, the types |
 | M3 | [m3-sstable-and-flush.md](m3-sstable-and-flush.md) | Flush, reads across tables, recovery-flush | SSTable block-table format, the block reader, the types |
 | M4 | [m4-merge-iterator.md](m4-merge-iterator.md) | The two read paths, a scan end to end, the reconciliation rules | The heap, the two-level SSTable iterator, cursor ownership |
+| M4.5 | [m4-5-integrity-boundaries.md](m4-5-integrity-boundaries.md) | The recovery case study: two one-bit header faults, the invariant, why the obvious patches failed, the decision | Log framing v2, the tail decision table, the decoder contract |
+| M5 | [m5-manifest-and-recovery.md](m5-manifest-and-recovery.md) | The open and flush sequences with every sync marked; when a table file is deleted | The manifest, `Version`/`VersionSet` ownership, the `Env` seam and the crash harness |
 
 **Planned explainers.** Each milestone's docs step writes one, from what was actually built:
 
 | Milestone | Explainer (written in) | It will show |
 |---|---|---|
-| M4.5 | `m4-5-integrity-boundaries.md` ([plan](../roadmap/m4-5-integrity-boundaries.md) Step 7) | the recovery case study: two header faults, the invariant, the v2 header, the tail decision table |
-| M5 | `m5-manifest-and-recovery.md` ([plan](../roadmap/m5-manifest-and-recovery.md) Step 9) | the open and flush sequences with every sync marked; `Version` ownership |
 | M5.5 | `m5-5-concurrent-write-path.md` ([plan](../roadmap/m5-5-concurrent-write-path.md) Step 6) | submit → group → sync → apply; stalls and watermarks |
 | M6 | `m6-compaction.md` ([plan](../roadmap/m6-compaction.md) Step 8) | levels, one compaction end to end, the lookup-order invariant, range selection |
 | M7 | `m7-batches-snapshots-bloom.md` ([plan](../roadmap/m7-batches-snapshots-bloom.md)) | batches, visibility at a sequence, the filter, per-level statistics |

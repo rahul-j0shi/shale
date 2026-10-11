@@ -1,11 +1,12 @@
 # M5 — Manifest and recovery: implementation plan
 
-**Status:** planned; starts after M4.5 is tagged (amended 2026-10-10 for the October 2026
+**Status:** ✅ done (2026-10-11); as built in the
+[explainer](../architecture/m5-manifest-and-recovery.md). Planned after M4.5 (amended 2026-10-10 for the October 2026
 engineering review: SH-01, SH-02, SH-04, SH-05, SH-09, SH-10 are closed here; see the
 [completion plan §11](completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
 **Depends on:** M4.5 — log framing v2 in `dev.shale.internal.log`, the newest-segment tail rule, a
-segment synced when it is closed (ADR-0024). **ADR:** 0012 (Step 1 writes it; this plan's §2 is
-what it records).
+segment synced when it is closed (ADR-0024). **ADR:** [0012](../adr/0012-manifest-and-recovery.md)
+(accepted in Step 1; it records this plan's §2).
 **Next:** [M5.5](m5-5-concurrent-write-path.md). **Estimate:** 3–4 focused weeks, in 9 steps.
 
 **Goal.** The set of live files comes from durable metadata (a manifest), not from listing the
@@ -31,7 +32,9 @@ harness that proves the durability claim under simulated power loss, not only pr
 | `close()` is not idempotent; `put`/`get`/`scan` after `close()` are not rejected; `EngineStateException` is never thrown | `Shale.close` |
 | No `LOCK` file: two engines can open one directory | — |
 | A new WAL segment's header is not synced, and neither is its directory entry; a flushed table's rename is not followed by a directory sync. So `SYNC` is not yet power-loss durable across a switch or a flush (SH-04) | `WalWriter.open`, `Shale.flushToSSTable` |
-| The log framing (v2, with a header checksum) is already in `LogWriter`/`LogReader`, and recovery accepts a torn tail only in the newest segment | `dev.shale.internal.log` (M4.5) |
+| The log framing (v2, with a header checksum) is shared: `LogWriter.create(path, magic, version)` with `append` and `sync`; `LogReader.read(bytes, magic, readableVersions, logName)` returning a `LogReadResult` (records, end offset, tail, tail offset), applying no policy. `RecordType` lives there too | `dev.shale.internal.log` (M4.5) |
+| `WalReader.read(Path)` reports a segment's tail; `Shale.replay` accepts a torn tail only in the newest segment; `WalWriter.close()` syncs | `WalReader`, `Shale.java`, `WalWriter` (M4.5) |
+| Varints, WAL records and SSTable structures follow ADR-0024 §6's decoder contract; `Varints.getUnsigned32` exists for `varint32` fields | M4.5 Steps 3 and 6 |
 | `CorruptionException` has no file path (N4 asks for file, offset, expected, actual) | `CorruptionException` |
 | All file I/O calls `FileChannel`/`Files` directly, so no test can inject a crash between operations | `WalWriter`, `WalReader`, `SSTableWriter`, `SSTableReader`, `Shale` |
 
@@ -51,12 +54,20 @@ harness that proves the durability claim under simulated power loss, not only pr
 - **File numbers:** one monotonic counter for all kinds. The format stays `%06d` as a *minimum*
   width; the parser accepts `\d{6,}` and orders numerically (`long`), so number 1,000,000 works.
 
-### 2.2 Manifest format v1 (`dev.shale.manifest`, `format.md` written in Step 5)
+### 2.2 Manifest format, version 2 (`dev.shale.manifest`, `format.md` written in Step 5)
 
 - **Framing:** log framing v2 (ADR-0024: 32 KiB blocks, fragments, a CRC32C over each fragment's
   header and another over its payload) through M4.5's `LogWriter`/`LogReader`, with its own file
-  header: magic `0x5368616C654D414E` ("ShaleMAN", `fixed64LE`), `FORMAT_VERSION` 1,
+  header: magic `0x5368616C654D414E` ("ShaleMAN", `fixed64LE`), `FORMAT_VERSION` **2**,
   4 reserved zero bytes.
+  - **Why 2, with no manifest v1.** In the shipped framing the file header's version *is* the
+    framing version, and it selects the fragment-header layout (`internal/log/format.md` §1). A
+    "version 1" manifest would be read with v1's 7-byte, unchecksummed headers — the very thing
+    M4.5 removed. So the manifest is born at version 2, the first framing with a header checksum,
+    and its `format.md` says why it has no v1. *(Decided in the reconciliation pass after M4.5.
+    The alternative, a log version independent of the framing version through a version→framing
+    map in `LogReader`, buys nothing until a log needs a payload change without a framing
+    change.)*
 - **Records:** one logical record = one `VersionEdit`, encoded as a sequence of `(tag, field)`
   pairs. Tags follow LevelDB's `version_edit.cc` numbering:
 
@@ -255,8 +266,7 @@ harness that proves the durability claim under simulated power loss, not only pr
 |---|---|---|---|
 | `Env`, `WritableFile`, `ReadableFile`, `PosixEnv` | `dev.shale.env` | public | 2 |
 | `FaultInjectionEnv`, `SimulatedCrash` | `dev.shale.env` (`shale-core` test fixtures) | test fixture | 3 |
-| `LogWriter`, `LogReader` (block framing, magic and version as parameters) | `dev.shale.internal.log` | public (internal) | 5 |
-| `WalWriter`, `WalReader` | `dev.shale.wal` | unchanged API; delegate to `LogWriter`/`LogReader` | 5 |
+| `LogWriter`, `LogReader` | `dev.shale.internal.log` | exist (M4.5); the manifest uses them with its own magic, and applies its own tail rule to `LogReadResult` | 5 |
 | `VersionEdit` (record), `VersionEditCodec`, `ManifestWriter`, `ManifestReader`, `CurrentFile` | `dev.shale.manifest` | public | 5 |
 | `FileMetadata` (record: level, number, size, smallest and largest sequence, smallest and largest key) | `dev.shale.manifest` | public | 6 |
 | `Version`, `VersionSet` | `dev.shale.manifest` | public | 6 |
@@ -265,7 +275,7 @@ harness that proves the durability claim under simulated power loss, not only pr
 | `ReconcilingCursor` | `dev.shale.iterator` | takes one *adopted* `ReferenceCounted` instead of retaining a list | 7 |
 | `CorruptionException` | `dev.shale` | adds a constructor with a `Path`; the message names the file | 4 |
 | `ShaleOptions` (record: `writeBufferSizeBytes`, `manifestRolloverBytes`; `defaults()`, `withX`) | `dev.shale` | public | 2 |
-| `Shale` | `dev.shale` | adds public `open(Path, ShaleOptions, Clock, Metrics)` and `open(Path, ShaleOptions, Clock, Metrics, Env)`; existing overloads delegate | 2, 7 |
+| `Shale` | `dev.shale` | adds public `open(Path, ShaleOptions, Clock, Metrics)`; the `Env` is an option (`ShaleOptions.env`), as in LevelDB's `Options`; existing overloads delegate | 2, 7 |
 
 ## 4. Steps
 
@@ -300,14 +310,16 @@ Each step is one branch off `main`, merged green before the next starts. Commit 
 3. `refactor(wal)`, `refactor(sstable)`: `WalWriter`, `WalReader`, `SSTableWriter` and
    `SSTableReader` take an `Env`. Their existing public `open` overloads delegate with
    `Env.DEFAULT`.
-4. `feat(api)`: `ShaleOptions`, a public record with `writeBufferSizeBytes` and
-   `manifestRolloverBytes`. It has `static ShaleOptions defaults()` (4 MiB and 4 MiB) and a
+4. `feat(api)`: `ShaleOptions`, a public record with `writeBufferSizeBytes`,
+   `manifestRolloverBytes` and `env`. It has `static ShaleOptions defaults()` (4 MiB, 4 MiB,
+   `Env.DEFAULT`) and a
    `withX(...)` method per field; the compact constructor rejects non-positive sizes. Later
    milestones add fields, so callers construct it through `defaults()`, never the canonical
    constructor (say so in its Javadoc). Add public `Shale.open(Path, ShaleOptions, Clock,
    Metrics)`; the existing `open` overloads delegate to it.
-5. `refactor(api)`: `Shale` does all file operations through its `Env`; add public
-   `open(Path, ShaleOptions, Clock, Metrics, Env)`.
+5. `refactor(api)`: `Shale` does all file operations through `options.env()`. *(As built: the
+   `Env` is an option, as in LevelDB's `Options::env`, not a fifth `open` parameter — which also
+   keeps `open` within checkstyle's four-parameter limit.)*
 
 **Done when:** all 161 existing tests pass unchanged, and `grep -rn "FileChannel.open\|Files\."`
 in `shale-core/src/main` finds only `PosixEnv`.
@@ -366,11 +378,12 @@ Step 4 changes public behaviour (`close()`, `LOCK`), which ADR-0012 (Step 1) alr
    - `VersionEditCodecPropertyTest`: round-trip over generated edits;
    - `VersionEditCodecTest`: unknown tag, overrunning field, level out of range;
    - `CurrentFileTest`: valid, missing newline, garbage;
-   - `GoldenManifestTest`: fixture `golden/manifest/v1/three-edits.manifest` and its `.json`;
+   - `GoldenManifestTest`: fixture `golden/manifest/v2/three-edits.manifest` and its `.json`;
    - a bit-flip test at every **bit** of the golden: every case throws `CorruptionException`
      (log framing v2 leaves no unchecked byte).
 
-   Commit with `Format-Change: manifest v1 — new file` and `Reversible: no`.
+   Commit with `Format-Change: manifest v2 — new file (no v1: born on log framing v2)` and
+   `Reversible: no`.
 
 **Done when:** the golden and bit-flip tests pass and `format.md` matches the golden bytes.
 

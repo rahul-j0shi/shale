@@ -47,6 +47,77 @@ class VarintsTest {
   }
 
   @Test
+  void get_tenthByteBeyondOneBit_isCorruptionNotZero() {
+    // SH-11: nine continuation bytes leave one bit for the tenth; payload 2 needs bit 64, which a
+    // long does not have. Java's shift wrapped it to 0 and the decoder returned value 0.
+    byte[] overflow = {
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      (byte) 0x80,
+      0x02
+    };
+
+    assertThatThrownBy(() -> Varints.get(overflow, 0))
+        .isInstanceOf(CorruptionException.class)
+        .hasMessageContaining("overflows 64 bits");
+  }
+
+  @Test
+  void get_allOnesWithFullTenthByte_isCorruption() {
+    byte[] overflow = {
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      (byte) 0xFF,
+      0x7F
+    };
+
+    assertThatThrownBy(() -> Varints.get(overflow, 0)).isInstanceOf(CorruptionException.class);
+  }
+
+  @Test
+  void get_maximumUnsigned64_roundTrips() {
+    byte[] buf = new byte[10];
+    int end = Varints.put(buf, 0, 0xFFFF_FFFF_FFFF_FFFFL);
+
+    Varints.Decoded decoded = Varints.get(buf, 0);
+
+    assertThat(end).isEqualTo(10);
+    assertThat(buf[9]).isEqualTo((byte) 0x01);
+    assertThat(decoded.value()).isEqualTo(0xFFFF_FFFF_FFFF_FFFFL);
+    assertThat(decoded.nextOffset()).isEqualTo(10);
+  }
+
+  @Test
+  void getUnsigned32_maximum_decodes() {
+    byte[] buf = new byte[5];
+    Varints.put(buf, 0, 0xFFFF_FFFFL);
+
+    assertThat(Varints.getUnsigned32(buf, 0).value()).isEqualTo(0xFFFF_FFFFL);
+  }
+
+  @Test
+  void getUnsigned32_twoToThe32_isCorruption() {
+    byte[] buf = new byte[5];
+    Varints.put(buf, 0, 1L << 32);
+
+    assertThatThrownBy(() -> Varints.getUnsigned32(buf, 0))
+        .isInstanceOf(CorruptionException.class)
+        .hasMessageContaining("varint32");
+  }
+
+  @Test
   void size_matchesBytesWritten() {
     assertThat(Varints.size(0)).isEqualTo(1);
     assertThat(Varints.size(127)).isEqualTo(1);

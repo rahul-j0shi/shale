@@ -1,0 +1,44 @@
+{
+  "format": "manifest",
+  "formatVersion": 2,
+  "description": "Three version edits: a new database's full state, a flush, and a compaction as M6 will write it. Uses all seven tags. Written by an implementation independent of Shale's; ManifestWriter reproduces it byte for byte.",
+  "fileBytes": 190,
+  "fragments": [
+    { "offset": 16, "payloadBytes": 59, "type": "FULL" },
+    { "offset": 86, "payloadBytes": 33, "type": "FULL" },
+    { "offset": 130, "payloadBytes": 49, "type": "FULL" }
+  ],
+  "recordEndOffsets": [86, 130, 190],
+  "internalKeys": "userKey, then fixed64LE(sequence << 8 | type), PUT = 1, DELETE = 0",
+  "edits": [
+    {
+      "comparator": "shale.BytewiseComparator",
+      "logNumber": 4,
+      "nextFileNumber": 6,
+      "lastSequence": 20,
+      "newFiles": [
+        { "level": 0, "number": 3, "sizeBytes": 1000, "smallestSequence": 1, "largestSequence": 10,
+          "smallestKey": "a@3 PUT", "largestKey": "m@10 PUT" }
+      ]
+    },
+    {
+      "logNumber": 7,
+      "nextFileNumber": 9,
+      "lastSequence": 35,
+      "newFiles": [
+        { "level": 0, "number": 8, "sizeBytes": 2000, "smallestSequence": 21, "largestSequence": 35,
+          "smallestKey": "b@21 PUT", "largestKey": "z@35 DELETE" }
+      ]
+    },
+    {
+      "nextFileNumber": 11,
+      "lastSequence": 35,
+      "compactionPointers": [ { "level": 0, "key": "m@10 PUT" } ],
+      "deletedFiles": [ { "level": 0, "number": 3 }, { "level": 0, "number": 8 } ],
+      "newFiles": [
+        { "level": 1, "number": 10, "sizeBytes": 2900, "smallestSequence": 1, "largestSequence": 35,
+          "smallestKey": "a@3 PUT", "largestKey": "z@35 DELETE" }
+      ]
+    }
+  ]
+}

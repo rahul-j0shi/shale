@@ -1,0 +1,15 @@
+{
+  "format": "wal",
+  "formatVersion": 2,
+  "description": "The review's A/B fixture in v2: 11-byte fragment headers. Flipping bit 6 of byte 21 (SH-18's length bit) now fails the header CRC.",
+  "fileBytes": 70,
+  "fragments": [
+    { "offset": 16, "payloadBytes": 16, "type": "FULL" },
+    { "offset": 43, "payloadBytes": 16, "type": "FULL" }
+  ],
+  "recordEndOffsets": [43, 70],
+  "records": [
+    { "userKey": "A", "sequenceNumber": 1, "valueType": "PUT", "value": "ack-A" },
+    { "userKey": "B", "sequenceNumber": 2, "valueType": "PUT", "value": "ack-B" }
+  ]
+}

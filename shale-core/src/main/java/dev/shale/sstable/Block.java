@@ -27,17 +27,58 @@ final class Block {
   private final int restartArrayOffset;
   private final int restartCount;
 
+  /**
+   * Parses {@code content}, validating its restart structure before trusting it (ADR-0024 §6). The
+   * restart array tells a reader where binary search may start and where the entries end, so it is
+   * structural authority, not a number to believe after the block's CRC:
+   *
+   * <ul>
+   *   <li>the count is bounded by the block's length <em>before</em> it is multiplied: (1 + count)
+   *       · 4 once overflowed {@code int}, so a 24-byte block claimed over a billion restarts and
+   *       still parsed (SH-14);
+   *   <li>offsets start at 0, strictly increase, and lie inside the entry region;
+   *   <li>each points at an entry that shares nothing with the one before ({@code shared == 0}),
+   *       which is what makes it a place a search can start.
+   * </ul>
+   *
+   * An empty entry region holds no restarts, or the single restart 0 the writer emits.
+   */
   Block(byte[] content) {
     if (content.length < Integer.BYTES) {
       throw new CorruptionException(
           "block too small for a restart count", 0, Integer.BYTES, content.length);
     }
     this.content = content;
-    this.restartCount = LittleEndian.getFixed32(content, content.length - Integer.BYTES);
-    this.restartArrayOffset = content.length - (1 + restartCount) * Integer.BYTES;
-    if (restartCount < 0 || restartArrayOffset < 0) {
+    int countOffset = content.length - Integer.BYTES;
+    long count = Integer.toUnsignedLong(LittleEndian.getFixed32(content, countOffset));
+    long maxCount = countOffset / Integer.BYTES;
+    if (count > maxCount) {
       throw new CorruptionException(
-          "restart array overruns block", content.length, content.length, restartCount);
+          "block restart count exceeds what the block can hold", countOffset, maxCount, count);
+    }
+    this.restartCount = (int) count;
+    this.restartArrayOffset = countOffset - restartCount * Integer.BYTES;
+    validateRestarts();
+  }
+
+  private void validateRestarts() {
+    int previous = -1;
+    for (int i = 0; i < restartCount; i++) {
+      int offset = restartOffset(i);
+      boolean inRegion = offset >= 0 && offset < Math.max(restartArrayOffset, 1);
+      boolean ordered = i == 0 ? offset == 0 : offset > previous;
+      if (!inRegion || !ordered) {
+        throw new CorruptionException(
+            "block restart offset out of place",
+            restartArrayOffset + i * Integer.BYTES,
+            previous,
+            offset);
+      }
+      if (restartArrayOffset > 0 && Varints.getUnsigned32(content, offset).value() != 0) {
+        throw new CorruptionException(
+            "block restart point at an entry with shared != 0", offset, 0, content[offset]);
+      }
+      previous = offset;
     }
   }
 
@@ -115,35 +156,39 @@ final class Block {
         valid = false;
         return;
       }
-      Varints.Decoded shared = Varints.get(content, offset);
-      Varints.Decoded nonShared = Varints.get(content, shared.nextOffset());
-      Varints.Decoded valueLength = Varints.get(content, nonShared.nextOffset());
-      int sharedLen = (int) shared.value();
-      int nonSharedLen = (int) nonShared.value();
-      int valueLen = (int) valueLength.value();
+      Varints.Decoded shared = Varints.getUnsigned32(content, offset);
+      Varints.Decoded nonShared = Varints.getUnsigned32(content, shared.nextOffset());
+      Varints.Decoded valueLength = Varints.getUnsigned32(content, nonShared.nextOffset());
       int keyDeltaOffset = valueLength.nextOffset();
-      int valueOffset = keyDeltaOffset + nonSharedLen;
-      int end = valueOffset + valueLen;
-      if (sharedLen > currentKey.length || end > restartArrayOffset) {
+      // Lengths stay long until checked against the region, so no sum can wrap (ADR-0024 §6).
+      long end = (long) keyDeltaOffset + nonShared.value() + valueLength.value();
+      if (shared.value() > currentKey.length || end > restartArrayOffset) {
         throw new CorruptionException(
             "block entry overruns its region", offset, restartArrayOffset, end);
       }
+      int sharedLen = (int) shared.value();
+      int nonSharedLen = (int) nonShared.value();
+      int valueOffset = keyDeltaOffset + nonSharedLen;
       byte[] key = new byte[sharedLen + nonSharedLen];
       System.arraycopy(currentKey, 0, key, 0, sharedLen);
       System.arraycopy(content, keyDeltaOffset, key, sharedLen, nonSharedLen);
       currentKey = key;
-      currentValue = Arrays.copyOfRange(content, valueOffset, end);
-      nextEntryOffset = end;
+      currentValue = Arrays.copyOfRange(content, valueOffset, (int) end);
+      nextEntryOffset = (int) end;
       valid = true;
     }
 
     /** The full key at restart {@code index}; a restart entry has {@code shared == 0}. */
     private byte[] firstKeyAtRestart(int index) {
       int offset = restartOffset(index);
-      Varints.Decoded shared = Varints.get(content, offset);
-      Varints.Decoded nonShared = Varints.get(content, shared.nextOffset());
-      Varints.Decoded valueLength = Varints.get(content, nonShared.nextOffset());
+      Varints.Decoded shared = Varints.getUnsigned32(content, offset);
+      Varints.Decoded nonShared = Varints.getUnsigned32(content, shared.nextOffset());
+      Varints.Decoded valueLength = Varints.getUnsigned32(content, nonShared.nextOffset());
       int keyDeltaOffset = valueLength.nextOffset();
+      if (nonShared.value() > restartArrayOffset - keyDeltaOffset) {
+        throw new CorruptionException(
+            "block restart key overruns its region", offset, restartArrayOffset, nonShared.value());
+      }
       return Arrays.copyOfRange(content, keyDeltaOffset, keyDeltaOffset + (int) nonShared.value());
     }
   }

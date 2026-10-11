@@ -8,6 +8,12 @@ import dev.shale.internal.annotations.ThreadSafe;
  * high bit set on every byte except the last. A 64-bit value takes at most 10 bytes; a run longer
  * than that, or one that ends before its terminator, is corruption (N4).
  *
+ * <p><b>The tenth byte carries one bit.</b> Nine bytes hold 63 value bits, so a tenth byte may only
+ * be {@code 0x00} or {@code 0x01}. Anything larger describes a number beyond 64 bits, which Java's
+ * shift would silently wrap (to 0, for {@code 0x02}); it is corruption instead (SH-11, ADR-0024
+ * §6). A width narrower than 64 bits is the consuming format's to enforce: fields the formats call
+ * {@code varint32} decode through {@link #getUnsigned32}.
+ *
  * <p><b>Threading:</b> stateless; pure functions over caller-owned arrays.
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/util/coding.cc">LevelDB coding.cc</a>
@@ -16,6 +22,9 @@ import dev.shale.internal.annotations.ThreadSafe;
 public final class Varints {
 
   private static final int MAX_BYTES = 10;
+
+  /** The shift of the tenth byte, which has room for only one value bit (bit 63). */
+  private static final int LAST_BYTE_SHIFT = 63;
 
   private Varints() {}
 
@@ -52,6 +61,9 @@ public final class Varints {
         throw new CorruptionException("truncated varint", offset, -1, -1);
       }
       int current = src[index++] & 0xFF;
+      if (shift == LAST_BYTE_SHIFT && current > 1) {
+        throw new CorruptionException("varint overflows 64 bits", index - 1, 1, current);
+      }
       result |= (long) (current & 0x7F) << shift;
       if ((current & 0x80) == 0) {
         return new Decoded(result, index);
@@ -59,6 +71,20 @@ public final class Varints {
       shift += 7;
     }
     throw new CorruptionException("overlong varint", offset, MAX_BYTES, index - offset);
+  }
+
+  /**
+   * Decodes a {@code varint32} field at {@code offset}: like {@link #get}, but a value of 2^32 or
+   * more is corruption. The value stays a {@code long}, so a caller can check it against the bytes
+   * remaining <em>before</em> narrowing it to an {@code int} (ADR-0024 §6).
+   */
+  public static Decoded getUnsigned32(byte[] src, int offset) {
+    Decoded decoded = get(src, offset);
+    if ((decoded.value() & ~0xFFFF_FFFFL) != 0) {
+      throw new CorruptionException(
+          "varint32 field exceeds 32 bits", offset, 0xFFFF_FFFFL, decoded.value());
+    }
+    return decoded;
   }
 
   /**

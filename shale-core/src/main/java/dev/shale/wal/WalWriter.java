@@ -3,22 +3,20 @@ package dev.shale.wal;
 import dev.shale.Clock;
 import dev.shale.Durability;
 import dev.shale.Metrics;
+import dev.shale.env.Env;
 import dev.shale.internal.annotations.NotThreadSafe;
-import dev.shale.internal.coding.Crc32c;
-import dev.shale.internal.coding.LittleEndian;
+import dev.shale.internal.log.LogWriter;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
 /**
- * Appends logical records to one WAL segment as LevelDB-style fragments across 32 KiB blocks
- * (ADR-0007). Durability is chosen per call (ADR-0008): {@code NONE} writes to the page cache;
- * {@code SYNC} and {@code GROUP} {@code force()} before returning.
+ * Appends logical records to one WAL segment. The framing — fragments across 32 KiB blocks — is the
+ * shared log framing ({@link LogWriter}); this class owns the WAL's file header and its durability
+ * contract (ADR-0008): {@code NONE} writes to the page cache; {@code SYNC} and {@code GROUP} force
+ * before returning.
  *
  * <p><b>Threading:</b> single-writer; owned by the engine's write path and serialised by it.
- * <b>Ownership:</b> holds a {@link FileChannel} closed by {@link #close()}.
+ * <b>Ownership:</b> owns a {@link LogWriter}, closed by {@link #close()}.
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/db/log_writer.cc">LevelDB
  *     log_writer.cc</a>
@@ -26,98 +24,70 @@ import java.nio.file.StandardOpenOption;
 @NotThreadSafe
 public final class WalWriter implements AutoCloseable {
 
-  private final FileChannel channel;
+  private final LogWriter log;
   private final Clock clock;
   private final Metrics metrics;
-  private int blockOffset;
 
-  private WalWriter(FileChannel channel, Clock clock, Metrics metrics) {
-    this.channel = channel;
+  private WalWriter(LogWriter log, Clock clock, Metrics metrics) {
+    this.log = log;
     this.clock = clock;
     this.metrics = metrics;
   }
 
-  /** Opens a fresh segment at {@code path} (which must not exist) and writes its file header. */
+  /**
+   * Opens a fresh segment at {@code path} (which must not exist), writes its file header and syncs
+   * it, so a segment that exists after a power loss has a whole header. Its directory entry is the
+   * caller's to sync ({@code Shale} does, before the first append).
+   */
   public static WalWriter open(Path path, Clock clock, Metrics metrics) throws IOException {
-    FileChannel channel =
-        FileChannel.open(
-            path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.READ);
-    byte[] header = new byte[WalFormat.FILE_HEADER_SIZE];
-    LittleEndian.putFixed64(header, 0, WalFormat.MAGIC);
-    LittleEndian.putFixed32(header, 8, WalFormat.FORMAT_VERSION);
-    // bytes 12..15 stay zero (reserved)
-    WalWriter writer = new WalWriter(channel, clock, metrics);
-    writer.writeFully(ByteBuffer.wrap(header));
-    return writer;
+    return open(Env.DEFAULT, path, clock, metrics);
+  }
+
+  /** As {@link #open(Path, Clock, Metrics)}, through {@code env}. */
+  public static WalWriter open(Env env, Path path, Clock clock, Metrics metrics)
+      throws IOException {
+    WalWriter wal =
+        new WalWriter(
+            LogWriter.create(env, path, WalFormat.MAGIC, WalFormat.FORMAT_VERSION), clock, metrics);
+    try {
+      wal.sync();
+    } catch (IOException e) {
+      wal.log.close();
+      throw e;
+    }
+    return wal;
   }
 
   /** Appends one logical record, then satisfies {@code durability} before returning. */
   public void append(byte[] payload, Durability durability) throws IOException {
-    writeRecord(payload);
+    log.append(payload);
     metrics.increment("wal.append.count", 1);
     if (durability != Durability.NONE) {
       sync();
     }
   }
 
-  private void sync() throws IOException {
-    long start = clock.nanoTime();
-    // DURABILITY: after force(false) returns, every record appended so far survives power loss.
-    channel.force(false);
-    metrics.increment("wal.sync.count", 1);
-    metrics.record("wal.sync.duration", clock.nanoTime() - start);
-  }
-
-  private void writeRecord(byte[] payload) throws IOException {
-    int left = payload.length;
-    int cursor = 0;
-    boolean begin = true;
-    do {
-      int leftover = WalFormat.BLOCK_SIZE - blockOffset;
-      if (leftover < WalFormat.FRAGMENT_HEADER_SIZE) {
-        if (leftover > 0) {
-          writeFully(ByteBuffer.wrap(new byte[leftover])); // zero-pad the block tail
-        }
-        blockOffset = 0;
-      }
-      int available = WalFormat.BLOCK_SIZE - blockOffset - WalFormat.FRAGMENT_HEADER_SIZE;
-      int fragmentLength = Math.min(left, available);
-      boolean end = fragmentLength == left;
-      writeFragment(fragmentType(begin, end), payload, cursor, fragmentLength);
-      blockOffset += WalFormat.FRAGMENT_HEADER_SIZE + fragmentLength;
-      cursor += fragmentLength;
-      left -= fragmentLength;
-      begin = false;
-    } while (left > 0);
-  }
-
-  private static RecordType fragmentType(boolean begin, boolean end) {
-    if (begin) {
-      return end ? RecordType.FULL : RecordType.FIRST;
-    }
-    return end ? RecordType.LAST : RecordType.MIDDLE;
-  }
-
-  private void writeFragment(RecordType type, byte[] payload, int offset, int length)
-      throws IOException {
-    byte[] frame = new byte[WalFormat.FRAGMENT_HEADER_SIZE + length];
-    frame[4] = (byte) length;
-    frame[5] = (byte) (length >>> 8);
-    frame[6] = (byte) type.code();
-    System.arraycopy(payload, offset, frame, WalFormat.FRAGMENT_HEADER_SIZE, length);
-    int crc = Crc32c.of(frame, 6, 1 + length); // over the type byte and the payload
-    LittleEndian.putFixed32(frame, 0, crc);
-    writeFully(ByteBuffer.wrap(frame));
-  }
-
-  private void writeFully(ByteBuffer buffer) throws IOException {
-    while (buffer.hasRemaining()) {
-      channel.write(buffer);
-    }
-  }
-
+  /**
+   * Syncs the segment, then closes it. A closed segment is therefore complete on disk, so recovery
+   * can require every segment but the newest to end cleanly: only the newest can have been cut
+   * short by a crash (ADR-0024 §5). It costs one fsync per memtable switch. Without it, a power
+   * loss after a switch could lose {@code NONE} writes in this segment while {@code SYNC} writes in
+   * the next one survive, and recovery would no longer restore a prefix of the writes.
+   */
   @Override
   public void close() throws IOException {
-    channel.close();
+    try {
+      // DURABILITY: a closed segment is complete, so only the newest can be torn (ADR-0024 §5).
+      sync();
+    } finally {
+      log.close();
+    }
+  }
+
+  private void sync() throws IOException {
+    long start = clock.nanoTime();
+    log.sync(); // the force itself, and its DURABILITY comment, are in LogWriter.sync
+    metrics.increment("wal.sync.count", 1);
+    metrics.record("wal.sync.duration", clock.nanoTime() - start);
   }
 }

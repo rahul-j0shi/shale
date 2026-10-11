@@ -59,3 +59,27 @@ jobs:
           name: test-reports
           path: '**/build/reports/tests/**'
           retention-days: 7
+
+  # The bootstrap a newcomer runs: scripts/bootstrap.sh fetches and checksum-verifies the
+  # vendored JDK 25 for this platform, env.sh points the shell at it, and the build must then
+  # pass with nothing else installed. This is what the README's first command promises on each
+  # platform. mac/x64 is not in the matrix; its pinned checksum is Adoptium's published value.
+  bootstrap:
+    name: bootstrap + build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bootstrap the vendored JDK 25
+        run: ./scripts/bootstrap.sh
+
+      - name: Build with it
+        run: |
+          source scripts/env.sh
+          ./gradlew build --no-daemon --stacktrace

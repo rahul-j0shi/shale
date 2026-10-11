@@ -1,0 +1,15 @@
+{
+  "format": "wal",
+  "formatVersion": 1,
+  "description": "Two SYNC PUTs, as Shale.put writes them into a fresh segment: the fixture of the October 2026 review (SH-08 flips bit 0 of byte 22; SH-18 flips bit 6 of byte 21).",
+  "fileBytes": 62,
+  "fragments": [
+    { "offset": 16, "payloadBytes": 16, "type": "FULL" },
+    { "offset": 39, "payloadBytes": 16, "type": "FULL" }
+  ],
+  "recordEndOffsets": [39, 62],
+  "records": [
+    { "userKey": "A", "sequenceNumber": 1, "valueType": "PUT", "value": "ack-A" },
+    { "userKey": "B", "sequenceNumber": 2, "valueType": "PUT", "value": "ack-B" }
+  ]
+}

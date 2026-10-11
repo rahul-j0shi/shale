@@ -13,7 +13,14 @@ import dev.shale.internal.annotations.Immutable;
 public enum Durability {
   /** Buffered only; survives process crash, not power loss. */
   NONE,
-  /** fsync'd before returning; survives power loss. */
+  /**
+   * The WAL record is fsync'd before returning; survives process crash.
+   *
+   * <p><b>Power loss: not yet guaranteed.</b> The record's bytes are forced, but the directory
+   * entry of a newly created WAL segment, and of a newly flushed SSTable, is not synced, so a power
+   * loss soon after a memtable switch or a flush can lose the file holding an acknowledged write.
+   * M5 adds the directory syncs and tests them under simulated power loss (ADR-0024 §7).
+   */
   SYNC,
   /**
    * Reserved for group commit: concurrent writers batched into one shared fsync.

@@ -140,6 +140,21 @@ The CRCs and offsets above are pinned by the committed golden file
 test decodes it and asserts the logical contents, and a bit-flip-at-every-offset test asserts every
 corruption is detected or provably harmless (on-disk-formats.md §3, §4).
 
+## 7a. What a reader checks before trusting a field (ADR-0024 §6)
+
+The bytes above are unchanged since M3; these rules describe what the v1 writer has always
+produced, and a reader refuses anything else with `CorruptionException`. A block's CRC proves its
+bytes are the ones written, not that they are the block the footer says they are.
+
+| Structure | Rule |
+|---|---|
+| file layout | the index block (with its trailer) ends exactly where the footer begins; the metaindex ends exactly where the index begins (SH-15) |
+| data handles in the index | each lies wholly before the metaindex, in increasing offset order, without overlap, and is encoded with nothing after it |
+| any `BlockHandle` read | `offset ∈ [0, file size]` and `size ≤ file size − offset − 5`, checked by `long` subtraction before anything is narrowed or allocated (SH-16) |
+| restart count | bounded by the block's length before any multiplication: at most (content length − 4) / 4 (SH-14) |
+| restart offsets | start at 0, strictly increase, lie inside the entry region, and point at entries with `shared = 0`; an empty entry region holds no restarts, or the writer's single restart 0 |
+| entry fields | `shared`, `non_shared` and `value_len` are `varint32`; `shared` ≤ the previous key's length; the entry ends inside the entry region (checked as `long`s) |
+
 ## 8. Rationale
 
 See ADR-0010. Block granularity gives a corruption boundary (per-block CRC, N4), a home for the

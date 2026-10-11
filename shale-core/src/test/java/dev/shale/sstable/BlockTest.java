@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.shale.BytewiseComparator;
 import dev.shale.CorruptionException;
 import dev.shale.KeyComparator;
+import dev.shale.internal.coding.LittleEndian;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -73,6 +74,98 @@ class BlockTest {
     // num_restarts = 1000 but the block is tiny → the restart array cannot fit.
     byte[] content = new byte[] {0x00, 0x00, 0x00, 0x00, (byte) 0xE8, 0x03, 0x00, 0x00};
     assertThatThrownBy(() -> new Block(content)).isInstanceOf(CorruptionException.class);
+  }
+
+  @Test
+  void sh14_restartCountOverflowingTheOffsetArithmetic_isCorruption() {
+    // SH-14: a 24-byte block whose count is 0x40000001. (1 + count) * 4 overflowed int to 8, so
+    // the restart array appeared to sit at offset 16 and the block parsed, its first key readable.
+    byte[] content = new byte[24];
+    byte[] entry = {0x00, 0x01, 0x01, 'A', 'x'}; // shared 0, non-shared 1, value 1, "A" -> "x"
+    System.arraycopy(entry, 0, content, 0, entry.length);
+    LittleEndian.putFixed32(content, 16, 0); // restart[0] = 0
+    LittleEndian.putFixed32(content, 20, 0x40000001);
+
+    assertThatThrownBy(() -> new Block(content))
+        .isExactlyInstanceOf(CorruptionException.class)
+        .hasMessageContaining("restart count");
+  }
+
+  @Test
+  void negativeRestartCount_isCorruption() {
+    byte[] content = build(keys(3));
+    LittleEndian.putFixed32(content, content.length - 4, -1);
+
+    assertThatThrownBy(() -> new Block(content)).isExactlyInstanceOf(CorruptionException.class);
+  }
+
+  @Test
+  void restartOffsetOutsideTheEntryRegion_isCorruption() {
+    byte[] content = build(keys(20));
+    setRestart(content, 1, content.length); // past the end of the block
+
+    assertThatThrownBy(() -> new Block(content))
+        .isExactlyInstanceOf(CorruptionException.class)
+        .hasMessageContaining("restart offset");
+  }
+
+  @Test
+  void restartOffsetsOutOfOrder_isCorruption() {
+    byte[] content = build(keys(20));
+    int second = restart(content, 1);
+    setRestart(content, 1, restart(content, 2));
+    setRestart(content, 2, second);
+
+    assertThatThrownBy(() -> new Block(content))
+        .isExactlyInstanceOf(CorruptionException.class)
+        .hasMessageContaining("restart offset");
+  }
+
+  @Test
+  void firstRestartNotAtTheStart_isCorruption() {
+    byte[] content = build(keys(20));
+    setRestart(content, 0, restart(content, 1));
+
+    assertThatThrownBy(() -> new Block(content)).isExactlyInstanceOf(CorruptionException.class);
+  }
+
+  @Test
+  void restartPointingAtAnEntryThatSharesAPrefix_isCorruption() {
+    // keys(20) with interval 4: entry 0 ("k0000" -> "vk0000") is 3 + 5 + 6 = 14 bytes, so entry 1
+    // starts at 14 and shares "k000" (shared = 4) with it: not a restart point.
+    byte[] content = build(keys(20));
+    assertThat(content[14]).as("entry 1's shared length").isEqualTo((byte) 4);
+    setRestart(content, 1, 14);
+
+    assertThatThrownBy(() -> new Block(content))
+        .isExactlyInstanceOf(CorruptionException.class)
+        .hasMessageContaining("shared");
+  }
+
+  @Test
+  void zeroRestartsAndNoEntries_isAnEmptyBlock() {
+    Block block = new Block(new byte[4]); // count 0, nothing else
+
+    Block.Iterator iterator = block.iterator(BYTEWISE);
+    iterator.seekToFirst();
+
+    assertThat(iterator.valid()).isFalse();
+  }
+
+  private static int restartCount(byte[] content) {
+    return LittleEndian.getFixed32(content, content.length - 4);
+  }
+
+  private static int restartSlot(byte[] content, int index) {
+    return content.length - 4 - (restartCount(content) - index) * 4;
+  }
+
+  private static int restart(byte[] content, int index) {
+    return LittleEndian.getFixed32(content, restartSlot(content, index));
+  }
+
+  private static void setRestart(byte[] content, int index, int offset) {
+    LittleEndian.putFixed32(content, restartSlot(content, index), offset);
   }
 
   private static byte[] build(List<String> keys) {
