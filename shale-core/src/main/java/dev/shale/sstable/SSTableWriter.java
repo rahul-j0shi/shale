@@ -29,6 +29,9 @@ public final class SSTableWriter implements AutoCloseable {
   private BlockBuilder dataBlock = new BlockBuilder(SSTableFormat.RESTART_INTERVAL);
   private long fileOffset;
   private byte[] lastKey = new byte[0];
+  private byte[] firstKey;
+  private long smallestSequence = Long.MAX_VALUE;
+  private long largestSequence = -1;
 
   private SSTableWriter(WritableFile file) {
     this.file = file;
@@ -47,7 +50,13 @@ public final class SSTableWriter implements AutoCloseable {
   /** Appends {@code internalKey → value}; {@code internalKey} must be ≥ every key added so far. */
   public void add(byte[] internalKey, byte[] value) throws IOException {
     dataBlock.add(internalKey, value);
+    if (firstKey == null) {
+      firstKey = internalKey.clone();
+    }
     lastKey = internalKey;
+    long sequence = sequenceOf(internalKey);
+    smallestSequence = Math.min(smallestSequence, sequence);
+    largestSequence = Math.max(largestSequence, sequence);
     if (dataBlock.currentSizeBytes() >= SSTableFormat.BLOCK_SIZE_BYTES) {
       flushDataBlock();
     }
@@ -67,6 +76,52 @@ public final class SSTableWriter implements AutoCloseable {
     // DURABILITY: after sync() returns the whole table survives power loss; the engine deletes the
     // covering WAL segment only after this returns (D3, ADR-0010).
     file.sync();
+  }
+
+  /** The first internal key added: the table's smallest. Requires at least one {@link #add}. */
+  public byte[] smallestKey() {
+    requireEntries();
+    return firstKey.clone();
+  }
+
+  /** The last internal key added: the table's largest. */
+  public byte[] largestKey() {
+    requireEntries();
+    return lastKey.clone();
+  }
+
+  /**
+   * The smallest sequence number added. Keys ascend by user key, not by sequence, so this is
+   * tracked across every key rather than read from the first.
+   */
+  public long smallestSequence() {
+    requireEntries();
+    return smallestSequence;
+  }
+
+  /** The largest sequence number added. */
+  public long largestSequence() {
+    requireEntries();
+    return largestSequence;
+  }
+
+  /** The bytes written so far; after {@link #finish}, the table's size. */
+  public long fileSizeBytes() {
+    return file.size();
+  }
+
+  private void requireEntries() {
+    if (firstKey == null) {
+      throw new IllegalStateException("no entry has been added");
+    }
+  }
+
+  /** The sequence number in an internal key's trailer: {@code fixed64LE(sequence << 8 | type)}. */
+  private static long sequenceOf(byte[] internalKey) {
+    if (internalKey.length < 8) {
+      throw new IllegalArgumentException("not an internal key: shorter than its 8-byte trailer");
+    }
+    return LittleEndian.getFixed64(internalKey, internalKey.length - 8) >>> 8;
   }
 
   private void flushDataBlock() throws IOException {

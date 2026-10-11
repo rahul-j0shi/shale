@@ -37,6 +37,26 @@ class SSTableTest {
   @TempDir private Path dir;
 
   @Test
+  void writer_reportsTheKeyAndSequenceRangesAndSize_aManifestEditNeeds() throws IOException {
+    Path path = dir.resolve("000002.sst");
+    byte[] smallest = new InternalKey(bytes("a"), 7, ValueType.PUT).encode();
+    byte[] middle = new InternalKey(bytes("b"), 9, ValueType.DELETE).encode();
+    byte[] largest = new InternalKey(bytes("c"), 3, ValueType.PUT).encode();
+    try (SSTableWriter writer = SSTableWriter.open(path)) {
+      writer.add(smallest, bytes("1"));
+      writer.add(middle, new byte[0]);
+      writer.add(largest, bytes("3"));
+      writer.finish();
+
+      assertThat(writer.smallestKey()).isEqualTo(smallest);
+      assertThat(writer.largestKey()).isEqualTo(largest);
+      assertThat(writer.smallestSequence()).as("not the first key's").isEqualTo(3);
+      assertThat(writer.largestSequence()).as("not the last key's").isEqualTo(9);
+      assertThat(writer.fileSizeBytes()).isEqualTo(Files.size(path));
+    }
+  }
+
+  @Test
   void roundTrip_ceilingLookupsAndOrderedIteration() throws IOException {
     Path path = dir.resolve("000001.sst");
     List<byte[]> internalKeys = writeTable(path);
