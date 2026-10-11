@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -72,7 +73,7 @@ class CorruptionExceptionTest {
     try (Shale db = Shale.open(dir, Clock.system(), Metrics.NOOP, 64)) {
       db.put(ascii("k"), new byte[100], Durability.SYNC); // fills the buffer: one flushed table
     }
-    Path table = dir.resolve("000003.sst"); // the switch takes 000002 for the new segment
+    Path table = onlyTable();
     flipByte(table, 10); // inside the first data block
 
     try (SSTableReader reader =
@@ -81,6 +82,15 @@ class CorruptionExceptionTest {
           catchThrowableOfType(CorruptionException.class, () -> reader.iterator().seekToFirst());
 
       assertThat(e.file()).contains(table);
+    }
+  }
+
+  /** The one table in {@link #dir}; its number depends on how many the open allocated. */
+  private Path onlyTable() throws IOException {
+    try (var files = Files.list(dir)) {
+      List<Path> tables = files.filter(p -> p.toString().endsWith(".sst")).toList();
+      assertThat(tables).hasSize(1);
+      return tables.getFirst();
     }
   }
 

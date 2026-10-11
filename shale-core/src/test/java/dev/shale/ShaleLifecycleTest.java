@@ -82,12 +82,13 @@ class ShaleLifecycleTest {
   @Test
   void aRefusedOpen_releasesTheLock() throws IOException {
     Shale.open(dir, Clock.system(), Metrics.NOOP).close();
-    Files.write(dir.resolve("000009.sst"), new byte[] {1, 2, 3}); // not a table
+    byte[] current = Files.readAllBytes(dir.resolve("CURRENT"));
+    Files.write(dir.resolve("CURRENT"), new byte[] {1, 2, 3}); // names no manifest
 
     assertThatThrownBy(() -> Shale.open(dir, Clock.system(), Metrics.NOOP))
         .isInstanceOf(CorruptionException.class);
 
-    Files.delete(dir.resolve("000009.sst"));
+    Files.write(dir.resolve("CURRENT"), current);
     Shale.open(dir, Clock.system(), Metrics.NOOP).close(); // the lock was not left held
   }
 

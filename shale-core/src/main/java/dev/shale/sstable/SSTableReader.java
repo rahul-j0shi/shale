@@ -173,6 +173,11 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     return path;
   }
 
+  /** The table file's size in bytes. */
+  public long fileSizeBytes() {
+    return fileSizeBytes;
+  }
+
   @Override
   public void close() {
     release();
