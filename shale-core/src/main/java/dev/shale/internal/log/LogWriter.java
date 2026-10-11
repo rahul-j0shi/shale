@@ -83,6 +83,11 @@ public final class LogWriter implements AutoCloseable {
     } while (left > 0);
   }
 
+  /** Bytes written to the file so far, header and padding included. */
+  public long sizeBytes() {
+    return file.size();
+  }
+
   /** Forces every record appended so far to stable storage. */
   public void sync() throws IOException {
     // DURABILITY: after sync returns, every record appended so far survives power loss, provided
