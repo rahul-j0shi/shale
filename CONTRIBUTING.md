@@ -8,7 +8,7 @@ system-wide installs, and `rm -rf .tools` removes every trace.
 ```bash
 git clone https://github.com/rahul-j0shi/shale.git && cd shale
 git config commit.template .gitmessage    # do this first
-./scripts/bootstrap.sh                     # fetch + verify JDK 25 into .tools/ (linux/x64 only)
+./scripts/bootstrap.sh                     # fetch + verify JDK 25 into .tools/ (Linux or macOS, x64 or ARM)
 source scripts/env.sh                      # JAVA_HOME + GRADLE_USER_HOME → .tools/
 ./gradlew build                            # first run also fetches Gradle into .tools/
 ```
@@ -17,8 +17,9 @@ source scripts/env.sh                      # JAVA_HOME + GRADLE_USER_HOME → .t
 Gradle's distribution and caches in `.tools/gradle-home` instead of `~/.gradle`. Do it
 once per shell. No other local tooling is required.
 
-**Not on Linux x64?** Install JDK 25 yourself, `export JAVA_HOME=<it>`, skip the bootstrap and
-`env.sh`, and run `./gradlew build`. M4.5 Step 0 adds macOS and ARM to the bootstrap.
+**On another platform?** Install JDK 25 yourself, `export JAVA_HOME=<it>`, skip the bootstrap
+and `env.sh`, and run `./gradlew build`. The script says the same if it does not recognise your
+platform.
 
 **Your first hour.** Read the [documentation map](documentation/README.md)'s "Build the next
 milestone" path. The work to pick up is always the first milestone not ✅ in the

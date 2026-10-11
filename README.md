@@ -60,9 +60,7 @@ database, and it is one consumer of the engine, not a requirement for using it.
 | **Read how it works, or ask why** | — | [architecture](documentation/architecture/README.md) · [ADRs](documentation/adr/README.md) · [FAQ](documentation/faq.md) |
 | **Contribute** | the build below | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-Try it now. On Linux x64 you need nothing but `git` and `curl`. On macOS or ARM, install any JDK
-25 yourself, set `JAVA_HOME` to it, and skip the bootstrap line; the script fetches a JDK for
-Linux x64 only until M4.5 Step 0.
+Try it now, with nothing installed but `git` and `curl` (Linux or macOS, x64 or ARM):
 
 ```bash
 git clone https://github.com/rahul-j0shi/shale.git && cd shale

@@ -19,7 +19,7 @@ it says which.
 
 | | |
 |---|---|
-| **JDK** | 25 or newer. On Linux x64 the repository fetches a checksum-verified one for you (§2). Elsewhere, install JDK 25 yourself and set `JAVA_HOME`; M4.5 Step 0 extends the script to macOS and ARM. |
+| **JDK** | 25 or newer. On Linux and macOS, x64 or ARM, the repository fetches a checksum-verified one for you (§2). Elsewhere, install JDK 25 yourself and set `JAVA_HOME`. |
 | **OS** | Linux or macOS. Windows is not supported: durable directory syncs rely on POSIX behaviour. |
 | **Dependencies** | None. `shale-core` has zero runtime dependencies, and the build fails if one appears. |
 
