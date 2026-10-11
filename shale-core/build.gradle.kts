@@ -5,6 +5,11 @@
 // SQL, networking or protocol code. That boundary is the architectural point of the
 // project (CLAUDE.md §2). Test-scope tooling only, from the allowlist.
 
+// Test fixtures (ADR-0012): FaultInjectionEnv lives in src/testFixtures so the test suites of the
+// ShaleDB modules can inject crashes too. `java-test-fixtures` is part of Gradle, not a dependency;
+// the fixtures are never on shale-core's runtime classpath and are not published (below).
+apply(plugin = "java-test-fixtures")
+
 dependencies {
     testImplementation(libs.assertj)
     testImplementation(libs.jqwik)
@@ -48,6 +53,12 @@ tasks.named("check") { dependsOn(verifyNoRuntimeDependencies) }
 apply(plugin = "maven-publish")
 
 extensions.configure<JavaPluginExtension> { withSourcesJar() }
+
+// The published library is the engine only: its test fixtures stay a build-internal variant.
+(components["java"] as AdhocComponentWithVariants).run {
+    withVariantsFromConfiguration(configurations["testFixturesApiElements"]) { skip() }
+    withVariantsFromConfiguration(configurations["testFixturesRuntimeElements"]) { skip() }
+}
 
 extensions.configure<PublishingExtension> {
     publications {
