@@ -18,10 +18,10 @@ import java.util.List;
  * {@link CorruptionException} (N4); a truncated tail — the normal result of a crash mid-append — is
  * handled per the caller's {@link RecoveryPolicy}.
  *
- * <p><b>Known gap (ADR-0024; closed by M4.5 Steps 3–5).</b> The reader decides "torn tail" from
- * fields the fragment CRC does not cover: a {@code ZERO} type skips the rest of a block before any
- * CRC check (SH-08), and a damaged {@code length} that runs past the end of the file is read as a
- * torn payload (SH-18). Either can make recovery drop acknowledged records silently.
+ * <p><b>Known gap (ADR-0024; closed by M4.5 Steps 4–5).</b> The reader decides "torn payload" from
+ * the {@code length} field, which the fragment CRC does not cover: a damaged length that runs past
+ * the end of the file is read as a torn tail, and recovery drops acknowledged records silently
+ * (SH-18). A {@code ZERO} type is accepted only as the start of an all-zero unwritten tail (SH-08).
  *
  * <p><b>Threading:</b> stateless; each call reads one file.
  *
@@ -72,7 +72,11 @@ public final class WalReader {
       int blockRemaining =
           WalFormat.BLOCK_SIZE - ((pos - WalFormat.FILE_HEADER_SIZE) % WalFormat.BLOCK_SIZE);
       if (blockRemaining < WalFormat.FRAGMENT_HEADER_SIZE) {
-        pos += blockRemaining; // zero-padded block tail
+        // The writer zero-pads a block tail too short for a header; padding is verified, never
+        // trusted (on-disk-formats.md §2). Only the bytes present are checked: a file may end
+        // inside the padding, which is an ordinary tail.
+        requireZeroPadding(data, pos, Math.min(pos + blockRemaining, data.length));
+        pos += blockRemaining;
         continue;
       }
       if (pos + WalFormat.FRAGMENT_HEADER_SIZE > data.length) {
@@ -82,7 +86,15 @@ public final class WalReader {
       int length = (data[pos + 4] & 0xFF) | ((data[pos + 5] & 0xFF) << 8);
       int typeCode = data[pos + 6] & 0xFF;
       if (typeCode == RecordType.ZERO.code()) {
-        pos += blockRemaining; // padding to the next block
+        // The writer never writes a ZERO fragment header. One is legitimate only as the start of
+        // an unwritten tail: space a filesystem allocated but never wrote, exposed as zeros after
+        // a crash. Anything else is a damaged type byte, and skipping it as padding — before any
+        // CRC check — is how one flipped bit once erased every record in a block (SH-08).
+        if (!allZero(data, pos, data.length)) {
+          throw new CorruptionException(
+              "WAL fragment type ZERO outside an unwritten (all-zero) tail", pos + 6, 1, 0);
+        }
+        torn = true;
         continue;
       }
       if (length > blockRemaining - WalFormat.FRAGMENT_HEADER_SIZE) {
@@ -108,6 +120,23 @@ public final class WalReader {
       throw new CorruptionException("torn record at WAL tail", pos, -1, -1);
     }
     return assembler.records();
+  }
+
+  private static void requireZeroPadding(byte[] data, int from, int to) {
+    for (int i = from; i < to; i++) {
+      if (data[i] != 0) {
+        throw new CorruptionException("non-zero WAL block padding", i, 0, data[i] & 0xFF);
+      }
+    }
+  }
+
+  private static boolean allZero(byte[] data, int from, int to) {
+    for (int i = from; i < to; i++) {
+      if (data[i] != 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Reassembles fragments into logical records, tracking the FIRST/MIDDLE/LAST state. */
