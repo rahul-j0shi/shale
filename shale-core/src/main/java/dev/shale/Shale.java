@@ -202,7 +202,7 @@ public final class Shale implements StorageBackend {
     }
 
     Path activeSegment = directory.resolve(segmentName(nextFileNumber++));
-    WalWriter wal = WalWriter.open(env, activeSegment, clock, metrics);
+    WalWriter wal = createSegment(env, activeSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(comparator, SKIPLIST_SEED);
     ReadView view = new ReadView(active, List.of(), List.copyOf(sstablesNewestFirst));
     return new Shale(
@@ -276,7 +276,7 @@ public final class Shale implements StorageBackend {
     // Roll to a fresh active memtable and WAL segment, and publish the frozen memtable as immutable
     // so readers keep seeing its data while the flush runs.
     activeWalSegment = directory.resolve(segmentName(nextFileNumber++));
-    wal = WalWriter.open(env, activeWalSegment, clock, metrics);
+    wal = createSegment(env, activeWalSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(userComparator, SKIPLIST_SEED);
     view = new ReadView(active, List.of(frozen), sstables);
     metrics.increment("memtable.switch.count", 1);
@@ -288,6 +288,26 @@ public final class Shale implements StorageBackend {
     // D3: the SSTable is durable (force in finish) and installed (atomic rename) before the WAL
     // segment that also held this data is deleted.
     env.delete(frozenSegment);
+  }
+
+  /**
+   * Creates WAL segment {@code path} and makes its creation durable before any record is appended:
+   * {@link WalWriter#open} syncs the header, then the directory is synced. Without the directory
+   * sync a power loss can drop the whole segment, synced records and all, because a file's own sync
+   * does not persist its name (SH-04).
+   */
+  private static WalWriter createSegment(Env env, Path path, Clock clock, Metrics metrics)
+      throws IOException {
+    WalWriter wal = WalWriter.open(env, path, clock, metrics);
+    try {
+      // DURABILITY: the segment's directory entry; with it, a SYNC record in it survives power
+      // loss.
+      env.syncDirectory(path.getParent());
+    } catch (IOException e) {
+      wal.close();
+      throw e;
+    }
+    return wal;
   }
 
   /** Writes a memtable to {@code finalPath} via a temp file + atomic rename, and opens a reader. */

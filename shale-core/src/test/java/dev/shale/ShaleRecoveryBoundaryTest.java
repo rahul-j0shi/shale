@@ -85,9 +85,11 @@ class ShaleRecoveryBoundaryTest {
       db.put(ascii("a"), new byte[100], Durability.NONE); // fills the buffer: one switch
 
       assertThat(metrics.counter("memtable.switch.count")).isEqualTo(1);
+      // NONE writes never sync. What does: each new segment's header as it is created (the first
+      // at open, the second at the switch: M5 Step 4), and the switched-out segment as it closes.
       assertThat(metrics.counter("wal.sync.count"))
-          .as("NONE writes never sync; closing the switched-out segment does, once")
-          .isEqualTo(1);
+          .as("two segment headers, and one close at the switch")
+          .isEqualTo(3);
     }
   }
 

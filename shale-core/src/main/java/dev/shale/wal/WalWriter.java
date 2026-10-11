@@ -34,7 +34,11 @@ public final class WalWriter implements AutoCloseable {
     this.metrics = metrics;
   }
 
-  /** Opens a fresh segment at {@code path} (which must not exist) and writes its file header. */
+  /**
+   * Opens a fresh segment at {@code path} (which must not exist), writes its file header and syncs
+   * it, so a segment that exists after a power loss has a whole header. Its directory entry is the
+   * caller's to sync ({@code Shale} does, before the first append).
+   */
   public static WalWriter open(Path path, Clock clock, Metrics metrics) throws IOException {
     return open(Env.DEFAULT, path, clock, metrics);
   }
@@ -42,8 +46,16 @@ public final class WalWriter implements AutoCloseable {
   /** As {@link #open(Path, Clock, Metrics)}, through {@code env}. */
   public static WalWriter open(Env env, Path path, Clock clock, Metrics metrics)
       throws IOException {
-    return new WalWriter(
-        LogWriter.create(env, path, WalFormat.MAGIC, WalFormat.FORMAT_VERSION), clock, metrics);
+    WalWriter wal =
+        new WalWriter(
+            LogWriter.create(env, path, WalFormat.MAGIC, WalFormat.FORMAT_VERSION), clock, metrics);
+    try {
+      wal.sync();
+    } catch (IOException e) {
+      wal.log.close();
+      throw e;
+    }
+    return wal;
   }
 
   /** Appends one logical record, then satisfies {@code durability} before returning. */
