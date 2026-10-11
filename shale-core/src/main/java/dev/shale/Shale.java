@@ -13,7 +13,6 @@ import dev.shale.manifest.Version;
 import dev.shale.manifest.VersionEdit;
 import dev.shale.manifest.VersionSet;
 import dev.shale.memtable.Memtable;
-import dev.shale.memtable.SkiplistMemtable;
 import dev.shale.sstable.SSTableReader;
 import dev.shale.sstable.SSTableWriter;
 import dev.shale.wal.WalRecordCodec;
@@ -93,6 +92,7 @@ public final class Shale implements StorageBackend {
   private final KeyComparator userComparator;
   private final InternalKeyComparator ordering;
   private final VersionSet versions;
+  private final MemtableKind memtables;
 
   /** The active WAL segment writer; null once closed. @GuardedBy("writeLock") */
   private WalWriter wal;
@@ -128,7 +128,8 @@ public final class Shale implements StorageBackend {
     this.wal = opened.wal();
     this.walNumber = opened.walNumber();
     this.nextSequence = opened.nextSequence();
-    this.view = new ReadView(newMemtable(userComparator), List.of());
+    this.memtables = opened.request().memtables();
+    this.view = new ReadView(memtables.create(userComparator), List.of());
   }
 
   /**
@@ -172,13 +173,18 @@ public final class Shale implements StorageBackend {
    */
   public static Shale open(Path directory, ShaleOptions options, Clock clock, Metrics metrics)
       throws IOException {
-    options.env().createDirectories(directory);
+    return open(new Recovery.Request(directory, options, clock, metrics, MemtableKind.SKIPLIST));
+  }
+
+  /** {@link #open(Path, ShaleOptions, Clock, Metrics)}, with the memtable kind chosen. */
+  static Shale open(Recovery.Request request) throws IOException {
+    Env env = request.options().env();
+    env.createDirectories(request.directory());
     // LOCK first: a second engine on this directory would replay and delete the same files.
-    Closeable lock = options.env().lock(directory.resolve(LOCK_FILE));
+    Closeable lock = env.lock(request.directory().resolve(LOCK_FILE));
     boolean opened = false;
     try {
-      Shale shale =
-          new Shale(Recovery.run(new Recovery.Request(directory, options, clock, metrics), lock));
+      Shale shale = new Shale(Recovery.run(request, lock));
       opened = true;
       return shale;
     } finally {
@@ -254,7 +260,7 @@ public final class Shale implements StorageBackend {
     closing.close(); // syncs: a closed segment is complete (ADR-0024 §5)
     walNumber = versions.newFileNumber();
     wal = Recovery.createSegment(env, directory.resolve(FileNames.wal(walNumber)), clock, metrics);
-    Memtable active = newMemtable(userComparator);
+    Memtable active = memtables.create(userComparator);
     view = new ReadView(active, List.of(frozen));
     metrics.increment("memtable.switch.count", 1);
 
@@ -459,10 +465,6 @@ public final class Shale implements StorageBackend {
     if (userKey == null || value == null || durability == null) {
       throw new IllegalArgumentException("userKey, value, and durability must be non-null");
     }
-  }
-
-  static Memtable newMemtable(KeyComparator comparator) {
-    return new SkiplistMemtable(comparator, SKIPLIST_SEED);
   }
 
   /**

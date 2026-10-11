@@ -102,8 +102,10 @@ final class Recovery {
    * @param options the engine's options, including its {@link Env}
    * @param clock the engine's clock
    * @param metrics the engine's metrics
+   * @param memtables which memtable the engine builds
    */
-  record Request(Path directory, ShaleOptions options, Clock clock, Metrics metrics) {}
+  record Request(
+      Path directory, ShaleOptions options, Clock clock, Metrics metrics, MemtableKind memtables) {}
 
   /**
    * What an open hands the engine.
@@ -174,7 +176,7 @@ final class Recovery {
     deleteTemporaryFiles();
     loadState();
     openTables();
-    Memtable replayed = Shale.newMemtable(COMPARATOR);
+    Memtable replayed = request.memtables().create(COMPARATOR);
     long lastSequence = Math.max(state.lastSequence(), replayWal(replayed));
 
     long next = Math.max(state.nextFileNumber(), FileNames.nextAfter(largestNumberOnDisk()));
