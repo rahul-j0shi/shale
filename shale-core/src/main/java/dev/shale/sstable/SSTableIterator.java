@@ -105,7 +105,7 @@ final class SSTableIterator implements InternalIterator {
 
   @Override
   public void close() {
-    // Nothing to release: blocks are plain heap arrays and the FileChannel belongs to the
+    // Nothing to release: blocks are plain heap arrays and the file belongs to the
     // SSTableReader, whose reference count the *cursor* holds (ADR-0011), not this iterator.
     index = null;
     data = null;

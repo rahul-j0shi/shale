@@ -3,6 +3,8 @@ package dev.shale.sstable;
 import dev.shale.CorruptionException;
 import dev.shale.KeyComparator;
 import dev.shale.StorageException;
+import dev.shale.env.Env;
+import dev.shale.env.ReadableFile;
 import dev.shale.internal.annotations.Immutable;
 import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.coding.Crc32c;
@@ -10,10 +12,7 @@ import dev.shale.internal.coding.LittleEndian;
 import dev.shale.iterator.InternalIterator;
 import dev.shale.iterator.ReferenceCounted;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -28,10 +27,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * spans every source (ADR-0011).
  *
  * <p><b>Threading:</b> thread-safe — the index block is immutable and data-block reads are
- * positional ({@code FileChannel.read(buffer, position)}), so concurrent readers do not interfere.
- * <b>Ownership:</b> reference-counted (N6): {@link #open} returns one reference; {@link #release}
- * drops one and closes the channel at zero. File deletion on the last release arrives with the
- * manifest (M5); at M3 nothing deletes a table.
+ * positional ({@link ReadableFile#read}), so concurrent readers do not interfere. <b>Ownership:</b>
+ * reference-counted (N6): {@link #open} returns one reference; {@link #release} drops one and
+ * closes the file at zero. File deletion on the last release arrives with the manifest (M5); at M3
+ * nothing deletes a table.
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/table/table.cc">LevelDB table.cc</a>
  */
@@ -39,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class SSTableReader implements AutoCloseable, ReferenceCounted {
 
   private final Path path;
-  private final FileChannel channel;
+  private final ReadableFile file;
   private final long fileSizeBytes;
   private final KeyComparator comparator;
   private final Block indexBlock;
@@ -47,12 +46,12 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
 
   private SSTableReader(
       Path path,
-      FileChannel channel,
+      ReadableFile file,
       long fileSizeBytes,
       KeyComparator comparator,
       Block indexBlock) {
     this.path = path;
-    this.channel = channel;
+    this.file = file;
     this.fileSizeBytes = fileSizeBytes;
     this.comparator = comparator;
     this.indexBlock = indexBlock;
@@ -62,26 +61,32 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
    * Opens {@code path}, verifying the footer and loading the index; the caller holds one reference.
    */
   public static SSTableReader open(Path path, KeyComparator comparator) throws IOException {
-    FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
+    return open(Env.DEFAULT, path, comparator);
+  }
+
+  /** As {@link #open(Path, KeyComparator)}, through {@code env}. */
+  public static SSTableReader open(Env env, Path path, KeyComparator comparator)
+      throws IOException {
+    ReadableFile file = env.newReadableFile(path);
     boolean opened = false;
     try {
-      long size = channel.size();
+      long size = file.size();
       if (size < SSTableFormat.FOOTER_SIZE) {
         throw new CorruptionException(
             "file smaller than a footer", 0, SSTableFormat.FOOTER_SIZE, size);
       }
       byte[] footerBytes =
-          readAt(channel, size - SSTableFormat.FOOTER_SIZE, SSTableFormat.FOOTER_SIZE);
+          readAt(file, size - SSTableFormat.FOOTER_SIZE, SSTableFormat.FOOTER_SIZE);
       Footer footer = Footer.decode(footerBytes, size - SSTableFormat.FOOTER_SIZE);
       validateLayout(footer, size - SSTableFormat.FOOTER_SIZE);
-      Block indexBlock = new Block(readBlock(channel, size, footer.indexHandle()));
+      Block indexBlock = new Block(readBlock(file, size, footer.indexHandle()));
       validateDataHandles(indexBlock, footer.metaindexHandle().offsetBytes(), comparator);
-      SSTableReader reader = new SSTableReader(path, channel, size, comparator, indexBlock);
+      SSTableReader reader = new SSTableReader(path, file, size, comparator, indexBlock);
       opened = true;
       return reader;
     } finally {
       if (!opened) {
-        channel.close(); // a bad footer/index must not leak the handle
+        file.close(); // a bad footer/index must not leak the handle
       }
     }
   }
@@ -106,7 +111,7 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
    * <p>Replaced the materialising {@code entries()} at M4 (ADR-0011): that method decoded the whole
    * table into a list, so iterating a large table cost the table rather than the cursor.
    *
-   * <p>The returned iterator reads through this reader's channel, so it is only usable while a
+   * <p>The returned iterator reads through this reader's file, so it is only usable while a
    * reference is held. It does <em>not</em> take one itself — the cursor that owns the read does
    * (N6), because that is the object whose lifetime matches the caller's.
    */
@@ -120,12 +125,12 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     references.incrementAndGet();
   }
 
-  /** Drops a reference; the last release closes the channel. */
+  /** Drops a reference; the last release closes the file. */
   @Override
   public void release() {
     if (references.decrementAndGet() == 0) {
       try {
-        channel.close();
+        file.close();
       } catch (IOException e) {
         throw new StorageException("closing SSTable " + path, e);
       }
@@ -139,7 +144,7 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
 
   private Block dataBlockAt(BlockHandle handle) {
     try {
-      return new Block(readBlock(channel, fileSizeBytes, handle));
+      return new Block(readBlock(file, fileSizeBytes, handle));
     } catch (IOException e) {
       throw new StorageException("reading SSTable " + path, e);
     }
@@ -214,7 +219,7 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
    * narrowed or allocated, so a malformed size is {@link CorruptionException}, never an {@code
    * ArithmeticException} or an out-of-bounds read (SH-16).
    */
-  private static byte[] readBlock(FileChannel channel, long fileSize, BlockHandle handle)
+  private static byte[] readBlock(ReadableFile file, long fileSize, BlockHandle handle)
       throws IOException {
     long offset = handle.offsetBytes();
     long contentSize = handle.sizeBytes();
@@ -232,7 +237,7 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     }
     int size = (int) contentSize;
     int frameSize = size + SSTableFormat.BLOCK_TRAILER_SIZE;
-    byte[] frame = readAt(channel, offset, frameSize);
+    byte[] frame = readAt(file, offset, frameSize);
     int storedCrc = LittleEndian.getFixed32(frame, size + 1);
     int actualCrc = Crc32c.of(frame, 0, size + 1); // over content ‖ type
     if (storedCrc != actualCrc) {
@@ -244,17 +249,13 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     return Arrays.copyOfRange(frame, 0, size);
   }
 
-  private static byte[] readAt(FileChannel channel, long position, int length) throws IOException {
-    ByteBuffer buffer = ByteBuffer.allocate(length);
-    int read = 0;
-    while (read < length) {
-      int n = channel.read(buffer, position + read);
-      if (n < 0) {
-        throw new CorruptionException("unexpected end of file", position + read, length, read);
-      }
-      read += n;
+  private static byte[] readAt(ReadableFile file, long position, int length) throws IOException {
+    byte[] bytes = new byte[length];
+    int read = file.read(position, bytes, 0, length);
+    if (read < length) {
+      throw new CorruptionException("unexpected end of file", position + read, length, read);
     }
-    return buffer.array();
+    return bytes;
   }
 
   /**
