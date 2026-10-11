@@ -13,7 +13,13 @@ package dev.shale;
  */
 public interface StorageBackend extends AutoCloseable {
 
-  /** Associates {@code value} with {@code userKey}, overwriting any previous value. */
+  /**
+   * Associates {@code value} with {@code userKey}, overwriting any previous value, and returns once
+   * {@code durability} holds.
+   *
+   * <p>An exception does not always mean the write is absent: an implementation may have logged and
+   * applied it before a later step failed. {@link Shale} documents when that happens.
+   */
   void put(byte[] userKey, byte[] value, Durability durability);
 
   /** Removes {@code userKey} if present; a later {@link #get} returns {@code null}. */
@@ -27,7 +33,7 @@ public interface StorageBackend extends AutoCloseable {
 
   /**
    * An ordered cursor over user keys in {@code [fromInclusive, toExclusive)}. A {@code null} bound
-   * is open-ended on that side.
+   * is open-ended on that side. See {@link Cursor} for what it sees of later writes.
    */
   Cursor scan(byte[] fromInclusive, byte[] toExclusive);
 

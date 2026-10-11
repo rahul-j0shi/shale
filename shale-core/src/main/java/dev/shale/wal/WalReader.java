@@ -18,6 +18,11 @@ import java.util.List;
  * {@link CorruptionException} (N4); a truncated tail — the normal result of a crash mid-append — is
  * handled per the caller's {@link RecoveryPolicy}.
  *
+ * <p><b>Known gap (ADR-0024; closed by M4.5 Steps 3–5).</b> The reader decides "torn tail" from
+ * fields the fragment CRC does not cover: a {@code ZERO} type skips the rest of a block before any
+ * CRC check (SH-08), and a damaged {@code length} that runs past the end of the file is read as a
+ * torn payload (SH-18). Either can make recovery drop acknowledged records silently.
+ *
  * <p><b>Threading:</b> stateless; each call reads one file.
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/db/log_reader.cc">LevelDB

@@ -6,6 +6,11 @@ import dev.shale.internal.annotations.NotThreadSafe;
  * A forward cursor over an ordered range of user keys. Positioned on construction at the first key
  * ≥ the scan's lower bound; {@link #isValid()} is false once exhausted.
  *
+ * <p><b>Visibility: weakly consistent, not a snapshot.</b> A cursor pins the sources it reads, so a
+ * flush never pulls data out from under it, and it never returns a partial record. But it reads the
+ * live memtable, so a write made after the cursor opened may or may not appear in it. Sequence
+ * snapshots, which give a cursor exactly the state at its opening, arrive at M7.
+ *
  * <p><b>Threading:</b> single-threaded; owned by the thread that opened it.
  *
  * <p><b>Closing is mandatory, not housekeeping.</b> From M4 a cursor streams from live sources and

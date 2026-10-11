@@ -41,7 +41,7 @@ import java.util.stream.Stream;
  * sequence and file-number counters, and publication of the read view); readers take a single
  * volatile read of the {@link ReadView} and traverse the lock-free skiplists and the thread-safe
  * SSTable readers with no lock (concurrency-and-resources.md §2). Flush is synchronous on the write
- * path at M3 (a background flush thread and write stalls arrive at M6); the manifest and the
+ * path at M3 (a background flush thread and write stalls arrive at M5.5); the manifest and the
  * reference-counted delete lifecycle arrive at M5. <b>Ownership:</b> owns a {@link WalWriter} and
  * one reference to each {@link SSTableReader}, all released by {@link #close()}.
  *
@@ -196,6 +196,16 @@ public final class Shale implements StorageBackend {
         view);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p><b>When it throws {@link StorageException}, the outcome is unknown.</b> The record is
+   * appended to the WAL and applied to the memtable <em>before</em> a full memtable is flushed; if
+   * that flush fails, this call throws although the write was logged (to {@code durability}) and is
+   * readable. Close and reopen before writing again: nothing yet stops further writes after a
+   * failed flush, and continuing can make {@link #get} and {@link #scan} disagree (SH-01; M5 adds
+   * the failed state).
+   */
   @Override
   public void put(byte[] userKey, byte[] value, Durability durability) {
     requireArgs(userKey, value, durability);
@@ -204,6 +214,7 @@ public final class Shale implements StorageBackend {
     }
   }
 
+  /** {@inheritDoc} A {@link StorageException} has the same unknown outcome as for {@link #put}. */
   @Override
   public void delete(byte[] userKey, Durability durability) {
     if (userKey == null || durability == null) {
@@ -326,17 +337,22 @@ public final class Shale implements StorageBackend {
    * A streaming cursor over the live keys in {@code [fromInclusive, toExclusive)}, merging the
    * memtable set and every SSTable (ADR-0011).
    *
-   * <p>The cost is the result, not the database: each source seeks straight to the lower bound, the
-   * heap merge yields entries one at a time, and the scan stops at the upper bound. Until M4 this
-   * decoded every entry in every source into one list and sorted it, so a one-key scan of a million
-   * keys paid for a million entries.
+   * <p>The traversal costs the result, not the database: each source seeks straight to the lower
+   * bound, the heap merge yields entries one at a time, and the scan stops at the upper bound.
+   * Until M4 this decoded every entry in every source into one list and sorted it, so a one-key
+   * scan of a million keys paid for a million entries. <b>Source setup is still per table:</b>
+   * every SSTable's iterator is built and positioned, loading one data block each, even when the
+   * range holds no key of that table (SH-17); M6 selects tables by key range first.
+   *
+   * <p>The cursor is weakly consistent: see {@link Cursor}.
    *
    * <p><b>The returned cursor must be closed.</b> It pins every SSTable it can read from for its
    * whole life (N6); leaking one leaks file handles.
    */
   @Override
   public Cursor scan(byte[] fromInclusive, byte[] toExclusive) {
-    ReadView snapshot = view; // one volatile read: a stable view for the whole scan
+    ReadView snapshot =
+        view; // one volatile read: a stable set of sources (not a sequence snapshot)
     List<InternalIterator> sources = new ArrayList<>();
     for (Memtable memtable : snapshot.memtablesNewestFirst()) {
       sources.add(memtable.iterator());
