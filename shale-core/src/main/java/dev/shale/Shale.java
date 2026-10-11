@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -59,8 +60,13 @@ public final class Shale implements StorageBackend {
   public static final long DEFAULT_WRITE_BUFFER_SIZE_BYTES =
       ShaleOptions.defaults().writeBufferSizeBytes();
 
-  private static final Pattern WAL_SEGMENT = Pattern.compile("\\d{6}\\.wal");
-  private static final Pattern SSTABLE_FILE = Pattern.compile("\\d{6}\\.sst");
+  /**
+   * Engine file names: a number of at least six digits ({@code %06d} is a minimum width, so number
+   * 1,000,000 has seven), then the kind. Ordered by the number, never the string (SH-09).
+   */
+  private static final Pattern WAL_SEGMENT = Pattern.compile("(\\d{6,})\\.wal");
+
+  private static final Pattern SSTABLE_FILE = Pattern.compile("(\\d{6,})\\.sst");
   private static final String TEMP_SUFFIX = ".tmp";
   private static final String LOCK_FILE = "LOCK";
   private static final byte[] NO_VALUE = new byte[0];
@@ -210,7 +216,7 @@ public final class Shale implements StorageBackend {
       SSTableReader reader = SSTableReader.open(env, table, ordering);
       sstablesNewestFirst.add(0, reader);
       maxSequence = Math.max(maxSequence, maxSequenceOf(reader));
-      maxFileNumber = Math.max(maxFileNumber, numberOf(table));
+      maxFileNumber = Math.max(maxFileNumber, numberOf(table, SSTABLE_FILE));
     }
 
     // Replay any WAL segments into one recovery memtable. Every throw from here on happens before
@@ -225,12 +231,21 @@ public final class Shale implements StorageBackend {
         recovered.add(decoded.internalKey().encode(), decoded.value());
         maxSequence = Math.max(maxSequence, decoded.internalKey().sequenceNumber());
       }
-      maxFileNumber = Math.max(maxFileNumber, numberOf(segment));
+      maxFileNumber = Math.max(maxFileNumber, numberOf(segment, WAL_SEGMENT));
     }
 
-    long nextFileNumber = maxFileNumber + 1;
+    // Every number this open needs is allocated before it writes or deletes anything, so running
+    // out of numbers is refused with every input intact.
+    long nextFileNumber = nextAfter(maxFileNumber);
+    Path table = null;
     if (recovered.sizeBytes() > 0) {
-      Path table = directory.resolve(sstableName(nextFileNumber++));
+      table = directory.resolve(sstableName(nextFileNumber));
+      nextFileNumber = nextAfter(nextFileNumber);
+    }
+    Path activeSegment = directory.resolve(segmentName(nextFileNumber));
+    nextFileNumber = nextAfter(nextFileNumber);
+
+    if (table != null) {
       sstablesNewestFirst.add(0, flushToSSTable(env, table, recovered, ordering));
       countFlush(metrics, recovered);
     }
@@ -238,7 +253,6 @@ public final class Shale implements StorageBackend {
       env.delete(segment); // D3: the recovery table is durable before its log is dropped
     }
 
-    Path activeSegment = directory.resolve(segmentName(nextFileNumber++));
     WalWriter wal = createSegment(env, activeSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(comparator, SKIPLIST_SEED);
     ReadView view = new ReadView(active, List.of(), List.copyOf(sstablesNewestFirst));
@@ -315,13 +329,13 @@ public final class Shale implements StorageBackend {
 
     // Roll to a fresh active memtable and WAL segment, and publish the frozen memtable as immutable
     // so readers keep seeing its data while the flush runs.
-    activeWalSegment = directory.resolve(segmentName(nextFileNumber++));
+    activeWalSegment = directory.resolve(segmentName(allocateFileNumber()));
     wal = createSegment(env, activeWalSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(userComparator, SKIPLIST_SEED);
     view = new ReadView(active, List.of(frozen), sstables);
     metrics.increment("memtable.switch.count", 1);
 
-    Path table = directory.resolve(sstableName(nextFileNumber++));
+    Path table = directory.resolve(sstableName(allocateFileNumber()));
     SSTableReader flushed = flushToSSTable(env, table, frozen, ordering);
     countFlush(metrics, frozen);
     view = new ReadView(active, List.of(), prepend(flushed, sstables));
@@ -558,13 +572,17 @@ public final class Shale implements StorageBackend {
     return max;
   }
 
+  /** The files in {@code directory} whose names match {@code namePattern}, in number order. */
   private static List<Path> filesInOrder(Env env, Path directory, Pattern namePattern)
       throws IOException {
-    return env.children(directory).stream()
-        .filter(name -> namePattern.matcher(name).matches())
-        .sorted(Comparator.naturalOrder())
-        .map(directory::resolve)
-        .toList();
+    List<Path> files = new ArrayList<>();
+    for (String name : env.children(directory)) {
+      if (namePattern.matcher(name).matches()) {
+        files.add(directory.resolve(name));
+      }
+    }
+    files.sort(Comparator.comparingLong(file -> numberOf(file, namePattern)));
+    return files;
   }
 
   private static void deleteTempTables(Env env, Path directory) throws IOException {
@@ -575,8 +593,33 @@ public final class Shale implements StorageBackend {
     }
   }
 
-  private static int numberOf(Path file) {
-    return Integer.parseInt(file.getFileName().toString().substring(0, 6));
+  /** The number in an engine file's name, which {@code namePattern} has matched. */
+  private static long numberOf(Path file, Pattern namePattern) {
+    String name = file.getFileName().toString();
+    Matcher matcher = namePattern.matcher(name);
+    if (!matcher.matches()) {
+      throw new IllegalArgumentException("not an engine file name: " + name);
+    }
+    try {
+      return Long.parseLong(matcher.group(1));
+    } catch (NumberFormatException e) {
+      throw new EngineStateException("file number out of range in " + name, e);
+    }
+  }
+
+  /** The next file number, taken from the counter. @GuardedBy("writeLock") */
+  private long allocateFileNumber() {
+    long number = nextFileNumber;
+    nextFileNumber = nextAfter(number);
+    return number;
+  }
+
+  /** {@code number + 1}; the counter never wraps to a number already used. */
+  private static long nextAfter(long number) {
+    if (number == Long.MAX_VALUE) {
+      throw new EngineStateException("file number counter exhausted at " + number);
+    }
+    return number + 1;
   }
 
   private static String segmentName(long number) {
