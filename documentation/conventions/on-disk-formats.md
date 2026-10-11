@@ -107,7 +107,7 @@ shale-core/src/test/resources/golden/
 ├── sstable/v1/basic.sst.json      # expected decoded contents
 ├── sstable/v2/with-filter.sst
 ├── wal/v1/single-batch.wal
-└── manifest/v1/three-edits.manifest
+└── manifest/v2/three-edits.manifest   # from M5; the manifest has no v1 (born on log framing v2)
 ```
 
 Golden files are **never regenerated to make a test pass.** If a golden test fails, the
