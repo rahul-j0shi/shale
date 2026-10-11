@@ -1,12 +1,13 @@
-package dev.shale.wal;
+package dev.shale.internal.log;
 
 import dev.shale.CorruptionException;
 import dev.shale.internal.annotations.Immutable;
 
 /**
- * The type byte of a WAL fragment (ADR-0007). {@code FULL} is a whole logical record in one
- * fragment; {@code FIRST}/{@code MIDDLE}/{@code LAST} carry a record that spans blocks. {@code
- * ZERO} is block padding and is never a real record.
+ * The type byte of a log fragment (ADR-0007; LevelDB's {@code log::RecordType}). {@code FULL} is a
+ * whole logical record in one fragment; {@code FIRST}/{@code MIDDLE}/{@code LAST} carry a record
+ * that spans blocks. {@code ZERO} is never written: a reader meets it only at the start of an
+ * all-zero unwritten tail (ADR-0024).
  */
 @Immutable
 public enum RecordType {
@@ -34,7 +35,7 @@ public enum RecordType {
       case 2 -> FIRST;
       case 3 -> MIDDLE;
       case 4 -> LAST;
-      default -> throw new CorruptionException("unknown WAL record type", -1, -1, code);
+      default -> throw new CorruptionException("unknown log record type", -1, -1, code);
     };
   }
 }

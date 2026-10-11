@@ -7,6 +7,7 @@ import dev.shale.Clock;
 import dev.shale.CorruptionException;
 import dev.shale.Durability;
 import dev.shale.Metrics;
+import dev.shale.internal.log.LogFormat;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +38,7 @@ class WalTest {
 
   @Test
   void roundTrip_recordSpanningManyBlocks() throws IOException {
-    byte[] big = pattern(WalFormat.BLOCK_SIZE * 2 + 100);
+    byte[] big = pattern(LogFormat.BLOCK_SIZE * 2 + 100);
     Path path = write(List.of(ascii("head"), big, ascii("tail")), Durability.NONE);
 
     List<byte[]> back = WalReader.readAll(path, RecoveryPolicy.STRICT);
