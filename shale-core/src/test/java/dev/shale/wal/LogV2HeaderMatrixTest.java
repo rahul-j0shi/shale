@@ -27,22 +27,22 @@ class LogV2HeaderMatrixTest {
     // SH-18: bit 6 of byte 21 turns A's length 16 into 16,400. In v1 the payload then ran past the
     // end of the file and was read as a torn append, so recovery returned no records. In v2 that
     // length is checked before it is believed.
-    byte[] data = V2Goldens.TWO_PUTS.bytes();
+    byte[] data = WalGoldens.TWO_PUTS.bytes();
     data[21] ^= 0x40;
 
-    assertThatThrownBy(() -> V2Goldens.read(data))
+    assertThatThrownBy(() -> WalGoldens.read(data))
         .isExactlyInstanceOf(CorruptionException.class)
         .hasMessageContaining("header CRC mismatch");
   }
 
   @ParameterizedTest(name = "{0} fragment {1}")
   @MethodSource("fragments")
-  void everySingleBitFlip_inAHeader_isAHeaderCrcMismatch(V2Goldens.Golden golden, int fragment) {
+  void everySingleBitFlip_inAHeader_isAHeaderCrcMismatch(WalGoldens.Golden golden, int fragment) {
     byte[] data = golden.bytes();
     int start = golden.fragmentStarts()[fragment];
 
     List<Integer> accepted =
-        IntStream.range(0, V2Goldens.HEADER * 8)
+        IntStream.range(0, WalGoldens.HEADER * 8)
             .filter(bit -> !headerCrcMismatch(data, start + bit / 8, 1 << (bit % 8)))
             .boxed()
             .toList();
@@ -52,12 +52,12 @@ class LogV2HeaderMatrixTest {
 
   @ParameterizedTest(name = "{0} fragment {1}")
   @MethodSource("fragments")
-  void everyCut_insideAHeader_isATornHeader(V2Goldens.Golden golden, int fragment) {
+  void everyCut_insideAHeader_isATornHeader(WalGoldens.Golden golden, int fragment) {
     int start = golden.fragmentStarts()[fragment];
 
     List<Tail> tails =
-        IntStream.range(start + 1, start + V2Goldens.HEADER)
-            .mapToObj(cut -> V2Goldens.read(Arrays.copyOf(golden.bytes(), cut)).tail())
+        IntStream.range(start + 1, start + WalGoldens.HEADER)
+            .mapToObj(cut -> WalGoldens.read(Arrays.copyOf(golden.bytes(), cut)).tail())
             .distinct()
             .toList();
 
@@ -66,14 +66,14 @@ class LogV2HeaderMatrixTest {
 
   @ParameterizedTest(name = "{0} fragment {1}")
   @MethodSource("fragments")
-  void cutsInsideAPayload_areATornPayload(V2Goldens.Golden golden, int fragment) {
-    int payloadStart = golden.fragmentStarts()[fragment] + V2Goldens.HEADER;
+  void cutsInsideAPayload_areATornPayload(WalGoldens.Golden golden, int fragment) {
+    int payloadStart = golden.fragmentStarts()[fragment] + WalGoldens.HEADER;
     int payloadEnd = payloadStart + golden.payloadLengths()[fragment];
 
     List<Tail> tails =
         IntStream.of(
                 payloadStart, payloadStart + 1, (payloadStart + payloadEnd) / 2, payloadEnd - 1)
-            .mapToObj(cut -> V2Goldens.read(Arrays.copyOf(golden.bytes(), cut)).tail())
+            .mapToObj(cut -> WalGoldens.read(Arrays.copyOf(golden.bytes(), cut)).tail())
             .distinct()
             .toList();
 
@@ -82,16 +82,16 @@ class LogV2HeaderMatrixTest {
 
   @ParameterizedTest(name = "{0} fragment {1}")
   @MethodSource("fragments")
-  void zeroFilledTail_inPlaceOfAFragment_isUnwritten(V2Goldens.Golden golden, int fragment) {
+  void zeroFilledTail_inPlaceOfAFragment_isUnwritten(WalGoldens.Golden golden, int fragment) {
     int start = golden.fragmentStarts()[fragment];
     int completeBefore =
         (int) IntStream.of(golden.recordEnds()).filter(end -> end <= start).count();
 
     List<LogReadResult> results =
-        IntStream.of(V2Goldens.HEADER, 100, 40_000)
+        IntStream.of(WalGoldens.HEADER, 100, 40_000)
             .mapToObj(
                 zeros ->
-                    V2Goldens.read(
+                    WalGoldens.read(
                         Arrays.copyOf(Arrays.copyOf(golden.bytes(), start), start + zeros)))
             .toList();
 
@@ -100,7 +100,7 @@ class LogV2HeaderMatrixTest {
   }
 
   static List<Arguments> fragments() {
-    return V2Goldens.ALL.stream()
+    return WalGoldens.ALL.stream()
         .flatMap(
             golden ->
                 IntStream.range(0, golden.fragmentStarts().length)
@@ -111,7 +111,7 @@ class LogV2HeaderMatrixTest {
   private static boolean headerCrcMismatch(byte[] data, int offset, int mask) {
     data[offset] ^= (byte) mask;
     try {
-      V2Goldens.read(data);
+      WalGoldens.read(data);
       return false;
     } catch (CorruptionException e) {
       return e.getMessage().contains("header CRC mismatch");

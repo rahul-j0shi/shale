@@ -24,7 +24,7 @@ class LogV2BitFlipTest {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("all")
-  void everyBit_ofEveryHeaderAndPaddingByte_isCorruption(V2Goldens.Golden golden) {
+  void everyBit_ofEveryHeaderAndPaddingByte_isCorruption(WalGoldens.Golden golden) {
     byte[] data = golden.bytes();
     IntStream structural =
         IntStream.concat(
@@ -36,7 +36,7 @@ class LogV2BitFlipTest {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("small")
-  void everyBit_ofASmallGolden_isCorruption(V2Goldens.Golden golden) {
+  void everyBit_ofASmallGolden_isCorruption(WalGoldens.Golden golden) {
     byte[] data = golden.bytes();
 
     assertThat(undetectedBitFlips(data, IntStream.range(0, data.length).toArray())).isEmpty();
@@ -45,7 +45,7 @@ class LogV2BitFlipTest {
   @Tag("crash")
   @ParameterizedTest(name = "{0}")
   @MethodSource("large")
-  void everyByte_ofALargeGolden_isCorruption(V2Goldens.Golden golden) {
+  void everyByte_ofALargeGolden_isCorruption(WalGoldens.Golden golden) {
     byte[] data = golden.bytes();
     int[] everyOffset = IntStream.range(0, data.length).toArray();
 
@@ -53,16 +53,16 @@ class LogV2BitFlipTest {
     assertThat(undetected(data, everyOffset, 0xFF)).as("XOR 0xFF").isEmpty();
   }
 
-  static List<V2Goldens.Golden> all() {
-    return V2Goldens.ALL;
+  static List<WalGoldens.Golden> all() {
+    return WalGoldens.ALL;
   }
 
-  static List<V2Goldens.Golden> small() {
-    return V2Goldens.SMALL;
+  static List<WalGoldens.Golden> small() {
+    return WalGoldens.SMALL;
   }
 
-  static List<V2Goldens.Golden> large() {
-    return V2Goldens.LARGE;
+  static List<WalGoldens.Golden> large() {
+    return WalGoldens.LARGE;
   }
 
   /** Every bit at each of {@code offsets}; the result names each flip that was not detected. */
@@ -82,7 +82,7 @@ class LogV2BitFlipTest {
         .mapToObj(
             offset -> {
               data[offset] ^= (byte) mask;
-              Throwable thrown = catchThrowable(() -> V2Goldens.read(data));
+              Throwable thrown = catchThrowable(() -> WalGoldens.read(data));
               data[offset] ^= (byte) mask;
               String where = "offset " + offset + " ^ 0x" + Integer.toHexString(mask) + ": ";
               if (thrown == null) {
@@ -95,7 +95,7 @@ class LogV2BitFlipTest {
   }
 
   /** Every byte of every padding run: from its start to the end of its block. */
-  private static IntStream paddingOffsets(V2Goldens.Golden golden) {
+  private static IntStream paddingOffsets(WalGoldens.Golden golden) {
     return IntStream.of(golden.paddingStarts())
         .flatMap(start -> IntStream.range(start, blockEnd(start)));
   }

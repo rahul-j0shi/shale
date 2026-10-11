@@ -37,13 +37,14 @@ class LogV2TruncationTest {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("small")
-  void everyCut_ofASmallGolden_keepsExactlyTheCompleteRecords(V2Goldens.Golden golden) {
+  void everyCut_ofASmallGolden_keepsExactlyTheCompleteRecords(WalGoldens.Golden golden) {
     assertThat(mismatches(golden, IntStream.rangeClosed(16, golden.bytes().length))).isEmpty();
   }
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("large")
-  void cutsNearEveryBoundary_ofALargeGolden_keepExactlyTheCompleteRecords(V2Goldens.Golden golden) {
+  void cutsNearEveryBoundary_ofALargeGolden_keepExactlyTheCompleteRecords(
+      WalGoldens.Golden golden) {
     int length = golden.bytes().length;
     IntStream boundaries =
         Stream.of(
@@ -62,13 +63,13 @@ class LogV2TruncationTest {
   @Tag("crash")
   @ParameterizedTest(name = "{0}")
   @MethodSource("large")
-  void everyCut_ofALargeGolden_keepsExactlyTheCompleteRecords(V2Goldens.Golden golden) {
+  void everyCut_ofALargeGolden_keepsExactlyTheCompleteRecords(WalGoldens.Golden golden) {
     assertThat(mismatches(golden, IntStream.rangeClosed(16, golden.bytes().length))).isEmpty();
   }
 
   @Test
   void strict_rejectsATornPayload() throws IOException {
-    Path segment = cut(V2Goldens.TWO_PUTS, 60); // inside B's payload
+    Path segment = cut(WalGoldens.TWO_PUTS, 60); // inside B's payload
 
     assertThatThrownBy(() -> WalReader.readAll(segment, RecoveryPolicy.STRICT))
         .isInstanceOf(CorruptionException.class)
@@ -77,44 +78,44 @@ class LogV2TruncationTest {
 
   @Test
   void truncateTail_acceptsATornPayload() throws IOException {
-    Path segment = cut(V2Goldens.TWO_PUTS, 60);
+    Path segment = cut(WalGoldens.TWO_PUTS, 60);
 
     assertThat(WalReader.readAll(segment, RecoveryPolicy.TRUNCATE_TAIL)).hasSize(1);
   }
 
   @Test
   void strict_acceptsACutAtARecordBoundary() throws IOException {
-    Path segment = cut(V2Goldens.TWO_PUTS, 43); // exactly after A
+    Path segment = cut(WalGoldens.TWO_PUTS, 43); // exactly after A
 
     assertThat(WalReader.readAll(segment, RecoveryPolicy.STRICT)).hasSize(1);
   }
 
-  static List<V2Goldens.Golden> small() {
-    return V2Goldens.SMALL;
+  static List<WalGoldens.Golden> small() {
+    return WalGoldens.SMALL;
   }
 
-  static List<V2Goldens.Golden> large() {
-    return V2Goldens.LARGE;
+  static List<WalGoldens.Golden> large() {
+    return WalGoldens.LARGE;
   }
 
-  private Path cut(V2Goldens.Golden golden, int length) throws IOException {
+  private Path cut(WalGoldens.Golden golden, int length) throws IOException {
     Path segment = dir.resolve(golden.file());
     Files.write(segment, Arrays.copyOf(golden.bytes(), length));
     return segment;
   }
 
   /** Reads each prefix of {@code golden} and describes every way it differs from the oracle. */
-  private static List<String> mismatches(V2Goldens.Golden golden, IntStream cuts) {
+  private static List<String> mismatches(WalGoldens.Golden golden, IntStream cuts) {
     byte[] data = golden.bytes();
     return cuts.mapToObj(cut -> mismatch(golden, Arrays.copyOf(data, cut), cut))
         .filter(Objects::nonNull)
         .toList();
   }
 
-  private static String mismatch(V2Goldens.Golden golden, byte[] prefix, int cut) {
+  private static String mismatch(WalGoldens.Golden golden, byte[] prefix, int cut) {
     LogReadResult result;
     try {
-      result = V2Goldens.read(prefix);
+      result = WalGoldens.read(prefix);
     } catch (CorruptionException e) {
       return "cut " + cut + ": " + e.getMessage();
     }
@@ -148,7 +149,7 @@ class LogV2TruncationTest {
   }
 
   /** How a file cut at {@code cut} ended, from the golden's layout alone. */
-  private static Tail expectedTail(V2Goldens.Golden golden, int cut) {
+  private static Tail expectedTail(WalGoldens.Golden golden, int cut) {
     boolean atRecordBoundary =
         cut == 16 || IntStream.of(golden.recordEnds()).anyMatch(end -> end == cut);
     // In or just after the padding that follows a record, nothing of the next record exists yet.
@@ -159,12 +160,12 @@ class LogV2TruncationTest {
   }
 
   /** The tail of a cut that is not at a record boundary: inside a fragment, or between two. */
-  private static Tail tailInsideRecord(V2Goldens.Golden golden, int cut) {
+  private static Tail tailInsideRecord(WalGoldens.Golden golden, int cut) {
     for (int i = 0; i < golden.fragmentStarts().length; i++) {
       int start = golden.fragmentStarts()[i];
-      int payloadEnd = start + V2Goldens.HEADER + golden.payloadLengths()[i];
+      int payloadEnd = start + WalGoldens.HEADER + golden.payloadLengths()[i];
       if (cut > start && cut < payloadEnd) {
-        return cut < start + V2Goldens.HEADER ? Tail.TORN_HEADER : Tail.TORN_PAYLOAD;
+        return cut < start + WalGoldens.HEADER ? Tail.TORN_HEADER : Tail.TORN_PAYLOAD;
       }
     }
     return Tail.OPEN_RECORD; // at a fragment boundary inside a record that spans blocks

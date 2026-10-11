@@ -11,9 +11,13 @@ import java.util.List;
  * @param records the payload of every complete logical record, in append order
  * @param endOffset the file offset just past the last complete record (16 if there is none)
  * @param tail how the file ended after {@code endOffset}
+ * @param tailOffset where the torn part begins — the torn header, the fragment whose payload is
+ *     short, or the first unwritten byte — or the file's length when the tail is {@link Tail#CLEAN}
+ *     or {@link Tail#OPEN_RECORD}
  */
 @Immutable
-public record LogReadResult(int version, List<byte[]> records, int endOffset, Tail tail) {
+public record LogReadResult(
+    int version, List<byte[]> records, int endOffset, Tail tail, int tailOffset) {
 
   /**
    * How a log ends. Every value but {@link #CLEAN} is a torn tail: bytes a crash left unwritten, so
@@ -22,6 +26,8 @@ public record LogReadResult(int version, List<byte[]> records, int endOffset, Ta
   public enum Tail {
     /** The last record is complete and nothing follows it but legal padding. */
     CLEAN,
+    /** The file is shorter than its 16-byte file header: a crash while the log was created. */
+    TORN_FILE_HEADER,
     /** Fewer bytes remain than a fragment header needs. */
     TORN_HEADER,
     /** Every byte from here to the end of the file is zero: allocated, never written. */

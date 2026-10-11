@@ -85,8 +85,9 @@ public final class LogReader {
       }
       if (tail == null) {
         tail = inRecord ? LogReadResult.Tail.OPEN_RECORD : LogReadResult.Tail.CLEAN;
+        pos = data.length;
       }
-      return new LogReadResult(version, List.copyOf(records), endOffset, tail);
+      return new LogReadResult(version, List.copyOf(records), endOffset, tail, pos);
     }
 
     /** Consumes one fragment or one padding run; returns a tail if the file ends torn here. */

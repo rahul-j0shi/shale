@@ -55,7 +55,7 @@ class LogFramingPropertyTest {
     }
     byte[] data = Files.readAllBytes(path);
 
-    LogReadResult result = V2Goldens.read(data);
+    LogReadResult result = WalGoldens.read(data);
 
     assertThat(result.version()).isEqualTo(version);
     assertThat(result.records()).containsExactlyElementsOf(written);

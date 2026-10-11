@@ -8,11 +8,11 @@ import dev.shale.internal.annotations.Immutable;
  * always {@code CorruptionException} (N4). The caller chooses the policy; the reader never decides
  * on its own.
  *
- * <p><b>Segments of version 2</b> (written from M4.5) check each fragment header before using its
- * {@code length} to call a tail torn, so a damaged header is corruption (ADR-0024). <b>Known gap in
- * version 1 segments (closed by M4.5 Step 5):</b> their {@code length} is unchecked, so a damaged
- * length that runs past the end of the file still reads as a torn tail (SH-18). In both, a {@code
- * ZERO} type is accepted only as the start of an all-zero unwritten tail (SH-08).
+ * <p>What counts as a torn tail depends on what the reader can verify (ADR-0024). In a version 2
+ * segment the fragment header is checksummed, so a short payload is a genuine torn append. In a
+ * version 1 segment it is not, so a complete header with a short payload is refused as unverifiable
+ * under <em>both</em> policies, rather than dropped (SH-18). The engine also accepts a torn tail
+ * only in the newest segment it replays.
  */
 @Immutable
 public enum RecoveryPolicy {
