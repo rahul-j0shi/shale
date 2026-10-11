@@ -310,7 +310,11 @@ public final class Shale implements StorageBackend {
     return wal;
   }
 
-  /** Writes a memtable to {@code finalPath} via a temp file + atomic rename, and opens a reader. */
+  /**
+   * Writes a memtable to {@code finalPath} via a temp file, a sync, an atomic rename and a
+   * directory sync, and opens a reader. When it returns the table survives power loss under its
+   * final name.
+   */
   private static SSTableReader flushToSSTable(
       Env env, Path finalPath, Memtable memtable, InternalKeyComparator ordering)
       throws IOException {
@@ -325,6 +329,9 @@ public final class Shale implements StorageBackend {
       writer.finish(); // fsync
     }
     env.rename(tempPath, finalPath); // install atomically
+    // DURABILITY: the table's new name. Only now may the WAL segment holding the same data be
+    // deleted: an unsynced rename can be lost while a later delete is kept (SH-04, D3).
+    env.syncDirectory(finalPath.getParent());
     return SSTableReader.open(env, finalPath, ordering);
   }
 

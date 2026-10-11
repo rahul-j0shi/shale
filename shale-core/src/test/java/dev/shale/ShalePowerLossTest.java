@@ -37,6 +37,13 @@ class ShalePowerLossTest {
     assertEveryCrashPointKeepsAcknowledgedWrites(new Workload(ShaleOptions.defaults(), 6, 8));
   }
 
+  @Test
+  void syncPutsAcrossFlushes_surviveAPowerLoss_atEveryOperation() throws IOException {
+    // ~86-byte records into a 200-byte buffer: a switch and a flush every three puts.
+    assertEveryCrashPointKeepsAcknowledgedWrites(
+        new Workload(ShaleOptions.defaults().withWriteBufferSizeBytes(200), 10, 60));
+  }
+
   private void assertEveryCrashPointKeepsAcknowledgedWrites(Workload workload) throws IOException {
     long operations = countOperations(workload);
     assertThat(operations).isPositive();
