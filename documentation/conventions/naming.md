@@ -21,7 +21,17 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `WalSegment` | `LogFile`, `LogChunk` | One rolled WAL file |
 | `Manifest` | `Metadata`, `Catalog` (that is ShaleDB's schema registry) | The log of version edits |
 | `VersionEdit` | `Delta`, `Change` | One atomic change to the file set |
-| `Version` | `Snapshot` (reserved, see below) | The live set of SSTables at a point in time |
+| `Version` | `Snapshot` (reserved, see below) | The live set of SSTables at a point in time; reference-counted, so a reader that retains one keeps its tables (ADR-0012) |
+| `VersionSet` | `VersionManager`, `FileSet` | Owns the current `Version`, the manifest that makes it durable, and the counters; every change goes through `logAndApply` |
+| `FileMetadata` | `TableInfo`, `FileMeta` | What the manifest records per table: level, number, size, key range, sequence range |
+| `CURRENT` | `HEAD`, `pointer file` | The one-line file naming the live manifest; switching it is the commit point of open and of a manifest rollover |
+| log number | `checkpoint`, `wal position` | The oldest WAL segment the durable state still needs; older segments are already in tables |
+| obsolete file | `garbage`, `dead file` | A table removed from the durable `Version` by a manifest edit; deleted by the release that drops its last reference |
+| orphan file | `leftover`, `stale file` | A file no manifest names, left by an interrupted operation; deleted at the next open |
+| failed state | `read-only mode`, `degraded` | The engine after a flush's I/O failure: writes refused with the cause, reads served, reopen to recover (ADR-0012 §2.6) |
+| `Env` | `FileSystem`, `Storage`, `IO` | The engine's I/O seam: every create, append, sync, rename, delete and directory sync (LevelDB's name) |
+| `WritableFile` / `ReadableFile` | `OutputFile`, `RandomAccessFile` (clashes with the JDK's) | An `Env`'s append-only file and its positional-read file |
+| `FaultInjectionEnv` | `FakeFs`, `CrashEnv` | The test `Env` that crashes at a chosen operation and simulates power loss (RocksDB's name, shortened) |
 | `Snapshot` | `Checkpoint` | An MVCC read view, identified by a sequence number |
 | checkpoint (`Shale.checkpoint(Path)`) | `backup`, `clone` in identifiers | An online, consistent **copy** of the database directory: flush, pin a `Version`, hard-link the tables (RocksDB's Checkpoint; M8). **Not** SQL's `CHECKPOINT`, which in ShaleDB (D7) flushes and compacts in place and copies nothing; it keeps PostgreSQL's name because clients send it. The SQL command that *does* copy is `BACKUP TO` |
 | `SequenceNumber` | `Timestamp`, `Version`, `Txid` | Monotonic per-mutation counter |
@@ -48,8 +58,8 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `RecoveryPolicy` | `RepairMode`, `Lenient` | The caller's choice of what recovery does with a torn tail: `TRUNCATE_TAIL` or `STRICT` |
 | durability mode (`Durability`) | `syncMode`, `fsyncLevel` | What an acknowledged write survives: `NONE`, `SYNC`, `GROUP` (ADR-0008) |
 | group commit | `batched fsync`, `coalescing` | One fsync covering many writers' records (ADR-0008; M5.5) |
-| `ReadView` | `MemtableSet` (its M2 name), `State` | The immutable set of sources a reader sees — the active memtable, the immutables and the tables — published with one volatile write |
-| pin / pinned | `lock`, `hold` (for a file) | A reference taken on an SSTable (`retain`) so it is not closed or deleted while a reader uses it |
+| `ReadView` | `MemtableSet` (its M2 name), `State` | The immutable set of memtables a reader sees — the active one and the immutables — published with one volatile write. From M5 the tables come from a retained `Version` |
+| pin / pinned | `lock`, `hold` (for a file) | A reference taken (`retain`) on a `Version` or an SSTable so it is not closed or deleted while a reader uses it |
 | weakly consistent cursor | `snapshot cursor` (it is not one) | A cursor that pins its sources but may see writes made after it opened; the M4–M6 behaviour (SH-03) |
 | failure model | `crash type` | The kind of failure a test or claim covers: clean restart, damaged bytes, torn tail, process death, simulated or physical power loss (ADR-0024 §7) |
 | write / read / space amplification | `overhead`, `bloat` | Bytes written to disk per byte written by the user / sources or bytes read per lookup / disk bytes per live byte (the RUM tradeoff) |
@@ -189,7 +199,8 @@ looks at.
 
 - On-disk artifacts follow LevelDB convention so they are recognisable:
   `000123.sst`, `000124.wal`, `MANIFEST-000007`, `CURRENT`, `LOCK`.
-- File numbers are zero-padded to six digits, allocated from one monotonic counter
-  shared across all file kinds. One counter, never per-kind.
+- File numbers are zero-padded to *at least* six digits (`%06d`; number 1,000,000 has seven),
+  allocated from one monotonic counter shared across all file kinds. One counter, never per-kind.
+  Names are matched as `\d{6,}` and ordered by number, never as strings (SH-09).
 - Documentation files are `kebab-case.md`. ADRs are `NNNN-kebab-title.md`.
 - Every package that defines a byte layout has a `format.md` beside its source.

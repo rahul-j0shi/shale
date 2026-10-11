@@ -58,10 +58,10 @@ Jars are attached to the GitHub release from `shale-1.0` (M8).
 
 ### Can two processes open the same directory?
 
-**Not safely before M5.**
-- **Before M5**, nothing stops a second process. Both would write the same log, and the result is
-  corruption.
-- **From M5**, a `LOCK` file makes the second `open` fail with `EngineStateException`.
+**No, and the engine stops it.** The first `open` holds the directory's `LOCK` file; a second
+`open`, from another process or the same one, fails with `EngineStateException` ("database
+directory is in use") and touches nothing. Before M5 nothing stopped it, and two engines would
+have written the same log.
 
 Within one process, share a single `Shale` instance across threads: it is thread-safe.
 
@@ -76,22 +76,22 @@ There is no block cache (out of scope, ADR-0013). Reads of data blocks go throug
 system's page cache.
 
 **Disk:** today it **only grows**. Nothing reclaims overwritten or deleted data until compaction
-arrives in M6. After M6, leveled compaction bounds the space used to roughly 1.1× the live data
+arrives in M6; since M5 the manifest makes deleting a table safe, but nothing deletes one yet. After M6, leveled compaction bounds the space used to roughly 1.1× the live data
 (the level-size ratio of 10). M8 measures the real figure.
 
 ### What happens if my machine loses power mid-write?
 
-**Today, an acknowledged `SYNC` write is not guaranteed to survive a power loss.** It survives a
-process crash.
-- **The gap:** the record's bytes are fsynced before `put` returns, but the directory entry of a
-  newly created log segment or flushed table is not. A power loss soon after a memtable switch or
-  a flush can lose the file.
+**An acknowledged `SYNC` write survives**, as it survives a process crash.
+- **Why:** the record's bytes are fsynced before `put` returns, and every file name it depends on
+  is synced too — a new log segment's, a flushed table's, `CURRENT`'s — before anything relies on
+  it (M5; before that, a power loss could lose a whole file).
 - **`NONE`:** the most recent writes may be lost. A segment is synced when it is closed at a
   memtable switch, so a `NONE` write in an older segment is never lost while a later `SYNC` write
   survives.
-- **From M5:** directory syncs, and a simulated filesystem that drops unsynced data and directory
-  entries at every file operation, so `SYNC` then means "survives power loss", with a test behind
-  it. Physical power loss is never tested; that claim rests on fsync ordering.
+- **How it is tested:** a fault-injecting file system crashes six workloads at every file
+  operation and then drops every unsynced byte and directory change a power loss may take. That
+  simulates POSIX's guarantees; physical power loss is never tested, and rests on the disk
+  honouring fsync.
 
 After a process crash, recovery restores a **prefix** of your writes, never a later write without
 an earlier one. A damaged log header is never mistaken for a torn tail: every fragment header
@@ -274,8 +274,11 @@ oracle.
 **Format stability:** golden files freeze every on-disk format, so a byte change cannot slip in
 unnoticed.
 
+**Simulated power loss:** a fault-injecting file system crashes the engine at every file
+operation of six workloads and drops what a power loss may take (M5). One random history also
+runs under eight configurations that must agree (a metamorphic test).
+
 **Planned:**
-- **M5:** a simulated filesystem crashes and loses power at every file operation.
 - **M6:** a soak test runs for hours.
 - **D2:** SQL is checked in the sqllogictest format against PostgreSQL's semantics.
 - **D4:** a checker tests serializability.
@@ -284,7 +287,7 @@ unnoticed.
 ### What does it do when it finds corruption?
 
 It is meant to stop and say where. A checksum mismatch throws `CorruptionException` with the
-offset, and the expected and actual values; M5 adds the file name. Deciding whether to recover is
+file, the offset, and the expected and actual values. Deciding whether to recover is
 the operator's call, made explicitly. A storage engine that hides corruption is worse than one
 that crashes.
 

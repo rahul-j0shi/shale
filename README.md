@@ -9,13 +9,14 @@ cost seen. **ShaleDB** is where it is going: a relational database on top of it,
 `EXPLAIN ANALYZE` traces each statement's cost from the SQL down to the disk.
 
 > **Status.**
-> - **The engine is built through M4.5.** It recovers from process crashes, and recovery decides
->   only on bytes it has verified; power-loss durability arrives at M5.
-> - **Its known defects are listed openly.** The five left, all lifecycle and directory-sync
->   gaps, are in the [open-defect register](documentation/bug-log.md#open-defects), each with the
->   milestone that fixes it. **M5 is next.**
+> - **The engine is built through M5.** A durable manifest says which files are live, so files
+>   can be deleted safely, and `SYNC` writes survive simulated power loss at every file operation.
+>   Recovery decides only on bytes it has verified.
+> - **Its known defects are listed openly** in the [bug log](documentation/bug-log.md): every
+>   finding of the October 2026 review is now fixed, each with its regression. **M5.5 is next.**
 > - **How a one-bit fault once lost acknowledged writes, and why the obvious fix was not enough**,
->   is the [M4.5 case study](documentation/architecture/m4-5-integrity-boundaries.md).
+>   is the [M4.5 case study](documentation/architecture/m4-5-integrity-boundaries.md); how the
+>   manifest makes deletion safe is the [M5 explainer](documentation/architecture/m5-manifest-and-recovery.md).
 > - **SQL, transactions and the PostgreSQL protocol (D1–D7) are planned, not built.**
 
 ## What exists today
@@ -25,10 +26,11 @@ cost seen. **ShaleDB** is where it is going: a relational database on top of it,
 | WAL — LevelDB block log, CRC32C per fragment, torn-tail policy, replay recovery | ✅ M1 |
 | Memtable — hand-written skiplist, lock-free readers, immutable handoff | ✅ M2 |
 | SSTable — prefix-compressed blocks, restart points, index, versioned footer | ✅ M3 |
-| Flush — fsync and atomic rename *before* the WAL segment is dropped (no directory sync yet) | ✅ M3 |
+| Flush — fsync and atomic rename *before* the WAL segment is dropped | ✅ M3 |
 | Reads — heap-based multi-way merge, reconciliation, tombstones, pinned tables; cursors are weakly consistent | ✅ M4 |
 | Integrity boundaries — a checksum on every log header, tails classified only on verified bytes, the newest-segment rule, validated decoders | ✅ M4.5 |
-| Manifest, safe file deletion, directory syncs, failed state · concurrent write path | ⏭ M5 · ❌ M5.5 |
+| Manifest, safe file deletion, directory syncs, failed state, `LOCK`, the `Env` seam | ✅ M5 |
+| Concurrent write path — group commit, background flush | ⏭ M5.5 |
 | Compaction · batches, snapshots, bloom filters · benchmarks | ❌ M6 · M7 · M8 |
 | Record layer · SQL · joins · transactions | ❌ D1–D4 |
 | PostgreSQL protocol · `EXPLAIN ANALYZE` cost accounting · demo | ❌ D5–D7 |
@@ -43,9 +45,12 @@ stands in for another (ADR-0024 §7):
 - **Format stability:** golden files freeze the on-disk formats.
 - **Clean restart:** a model harness runs thousands of random operations against a `TreeMap`
   oracle, restarting the engine mid-sequence.
-- **Power loss:** not tested yet. M5 simulates it at every file operation.
+- **Simulated power loss:** six workloads are crashed at every file operation, then lose every
+  unsynced byte and directory entry a power loss may take; every acknowledged `SYNC` write must
+  survive. Physical power loss is argued from fsync ordering, not tested.
+- **Metamorphic:** one random history must give the same answers under eight configurations.
 
-`./gradlew build crashTest` is green on JDK 25 (279 tests).
+`./gradlew build crashTest` is green on JDK 25 (371 tests).
 
 ## Use it
 
@@ -85,8 +90,8 @@ try (Shale db = Shale.open(Path.of("data"), Clock.system(), Metrics.NOOP)) {
 > **Not production software.** Shale is a study project with no production use, and with known
 > defects listed openly. The guide's
 > [limitations table](documentation/guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it)
-> says what is missing or broken today and which milestone fixes it. Most importantly: until M5,
-> `SYNC` is not power-loss durable; until M6 there is no compaction, so disk use only grows.
+> says what is missing or broken today and which milestone fixes it. Most importantly: until M6
+> there is no compaction, so disk use only grows.
 
 ## Why: ShaleDB, a see-through database
 
@@ -141,11 +146,12 @@ designs per milestone: [`documentation/architecture/`](documentation/architectur
 ## Roadmap
 
 Strictly ordered; each milestone ends in a tested, tagged artifact.
-- **M4.5 is done.** It responded to an
-  [external engineering review](documentation/roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)
-  (October 2026): the log has a header checksum, recovery classifies a tail only from verified
-  bytes, and every decoder validates its fields
-  ([ADR-0024](documentation/adr/0024-recovery-integrity-boundaries.md)). **M5 is next.**
+- **M5 is done.** A manifest of version edits is the authority for live files
+  ([ADR-0012](documentation/adr/0012-manifest-and-recovery.md)); every write path syncs the
+  directory entries it depends on; and a fault-injecting file system tests that under simulated
+  power loss. It closed the last five findings of the October 2026
+  [external engineering review](documentation/roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed);
+  M4.5 closed the others. **M5.5 is next.**
 - **Shale 1.0** (the engine, measured) is M8; **v1.0** (the database and demo) is D7.
 
 The [completion plan](documentation/roadmap/completion-plan.md) has the per-milestone plans,

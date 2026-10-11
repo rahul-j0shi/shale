@@ -5,6 +5,32 @@ One entry per milestone, newest first. Each is tagged on `main`; the as-built de
 [`documentation/adr/`](documentation/adr/). What comes next is in the
 [plan](documentation/roadmap/completion-plan.md).
 
+## M5 — Manifest and recovery · `m5-manifest`
+
+The set of live files now comes from a durable manifest, not from listing the directory (ADR-0012).
+The [explainer](documentation/architecture/m5-manifest-and-recovery.md) shows the open and flush
+sequences with every sync marked.
+- **Manifest v2** (new file, born on log framing v2): LevelDB's version-edit tags, with each
+  table's sequence range; `CURRENT` names the live manifest and is switched through a synced
+  temp file, a rename and a directory sync. Rolled over past `manifestRolloverBytes`.
+- **`Version` and `VersionSet`:** reads retain a Version; a table removed by an edit is deleted by
+  the release that drops its last reference — never under a reader, never before the edit is
+  durable.
+- **Recovery through the manifest:** only the segments it still needs are replayed; a new
+  full-state manifest is the commit point; orphans are deleted after it; a refused open changes
+  nothing and releases everything (SH-02). A pre-M5 directory is migrated on its first open.
+- **Power-loss durability:** a new segment's header and directory entry, and a flushed table's
+  rename, are synced before anything depends on them (SH-04).
+- **Lifecycle:** the failed state after a flush error (SH-01); idempotent `close()` and rejection
+  after it; `LOCK`; file numbers past 999,999 (SH-09); a cursor that cannot position gives its
+  references back (SH-10); `CorruptionException` names the file.
+- **API:** `ShaleOptions`; the public `Env` seam (`PosixEnv`); `FaultInjectionEnv` in `shale-core`'s
+  test fixtures.
+- **Tests:** the crash matrix (six workloads × every operation × two loss models), the
+  power-loss test, a metamorphic test over eight configurations, and the manifest golden written
+  by an independent implementation. 371 tests (355 fast, 16 in the crash tier), up from 279.
+  Format change: manifest v2 (new).
+
 ## M4.5 — Integrity boundaries · `m4.5-integrity`
 
 Recovery, and every decoder, now decides only on bytes it has verified (ADR-0024). The

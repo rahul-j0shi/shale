@@ -1,6 +1,7 @@
 # M5 — Manifest and recovery: implementation plan
 
-**Status:** planned; starts after M4.5 is tagged (amended 2026-10-10 for the October 2026
+**Status:** ✅ done (2026-10-11); as built in the
+[explainer](../architecture/m5-manifest-and-recovery.md). Planned after M4.5 (amended 2026-10-10 for the October 2026
 engineering review: SH-01, SH-02, SH-04, SH-05, SH-09, SH-10 are closed here; see the
 [completion plan §11](completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
 **Depends on:** M4.5 — log framing v2 in `dev.shale.internal.log`, the newest-segment tail rule, a

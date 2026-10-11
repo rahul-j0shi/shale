@@ -1,7 +1,8 @@
 # M5.5 — Concurrent write path: implementation plan
 
-**Status:** planned; starts after M5 is tagged. **Depends on:** M5 (`Env`, `FaultInjectionEnv`,
-`VersionSet`, `ShaleOptions`, the flush sequence of its plan §2.4, the failed state of §2.6).
+**Status:** planned; next, starts after M5 is tagged (reconciled with what M5 shipped,
+2026-10-11). **Depends on:** M5 (`Env`, `FaultInjectionEnv`, `VersionSet`, `ShaleOptions`, the
+flush sequence of its plan §2.4, the failed state of §2.6).
 **ADR:** 0014. **Unblocks:** M6 (compaction needs a background thread) and M7 (`writeAsync`
 needs a write path that never blocks its caller on I/O). **Estimate:** 2–3 focused weeks, in 6
 steps.
@@ -20,10 +21,14 @@ steps.
 | Fact | Where |
 |---|---|
 | `put`/`delete` take `writeLock` and do WAL append, sync, memtable insert and — when the memtable is full — the whole flush, all while holding it | `Shale.put`, `Shale.append`, `Shale.switchAndFlush` |
-| The flush sequence is M5 plan §2.4, flush steps 1–6 | `Shale.switchAndFlush` |
+| The flush sequence is M5 plan §2.4, flush steps 1–6: switch (`Recovery.createSegment`), `Shale.flush` (table, sync, rename, directory sync), `VersionSet.logAndApply`, publish, delete the segment (`Recovery.deleteCounted`), `VersionSet.rolloverIfLargerThan` | `Shale.switchAndFlush` |
+| The failed state is a `failure` field under `writeLock`; `append` sets it on a WAL or flush `IOException`, and `requireWritable` throws `EngineStateException` with it | `Shale.fail`, `Shale.requireWritable` |
+| The read view holds only memtables; readers retain the current `Version` from the `VersionSet` after reading the view, and a flush installs its Version before publishing the view without the frozen memtable | `Shale.ReadView`, `Shale.get`, `Shale.scan` |
 | `Durability.GROUP` behaves exactly like `SYNC` | `Durability` Javadoc |
-| The memtable is single-writer by design | ADR-0009, `SkiplistMemtable` |
-| `ShaleOptions` exists with `writeBufferSizeBytes` and `manifestRolloverBytes` | M5 plan, Step 2 |
+| The memtable is single-writer by design; `MemtableKind` (package-private) chooses skiplist or tree, for tests | ADR-0009, `SkiplistMemtable`, `MemtableKind` |
+| `ShaleOptions` exists with `writeBufferSizeBytes`, `manifestRolloverBytes` and `env` (the `Env` is an option, not an `open` parameter) | `ShaleOptions` |
+| `FaultInjectionEnv` gives `crashAt`, `failOn`, `dropUnsyncedData(DropMode, EntryLoss, seed)` and `openHandles()`; a `readCount` is added here if Step 2's baseline needs it | `shale-core` test fixtures |
+| The crash matrix and `ShalePowerLossTest` exercise every file operation of their workloads; this milestone's new paths join them | `ShaleCrashMatrixTest` |
 
 ## 2. The design (decided — ADR-0014 records it with the alternatives)
 

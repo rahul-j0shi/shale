@@ -158,8 +158,9 @@ it rejected, as that milestone's first step. The numbers are reserved now.
 **Public API changes to `shale-core`** (each in its ADR, with a `Reversible:` trailer):
 - M4.5: none. Behaviour: an unverifiable v1 WAL tail fails `open`, and a segment is synced
   when it is closed.
-- M5: `ShaleOptions`; the `Env` SPI (`dev.shale.env`); `open(…, Env)`; closed-state and
-  repeated-close semantics.
+- M5 (shipped): `ShaleOptions` (with the `Env` as an option); the `Env` SPI (`dev.shale.env`);
+  `dev.shale.manifest`; closed-state, repeated-close, `LOCK` and failed-state semantics;
+  `CorruptionException.file()`.
 - M5.5: `ShaleOptions` fields; `Durability.GROUP` documented as an alias.
 - M6: `ShaleOptions` fields; `flush()`; `compactRange(from, to)`.
 - M7: `WriteBatch`, `WriteResult`, `write`, `writeAsync`, `Snapshot`, `ReadOptions`,
@@ -232,8 +233,9 @@ demonstrations. They are the claim.
 |---|---|---|---|---|
 | M0–M4 | ✅ | 3–6 | ~2.5 | tag `m4-merge`; see the [changelog](../../CHANGELOG.md) |
 | M4.5 | ✅ | 2–3 | ~2 days | tag `m4.5-integrity` once merged; 18 commits, 161 → 279 tests |
-| M5 | ⏭ in progress | 3–4 | | Step 1 done: [ADR-0012](../adr/0012-manifest-and-recovery.md) accepted |
-| M5.5 · M6 · M7 · M8 | ☐ | 12–17 | | |
+| M5 | ✅ | 3–4 | ~1 day | tag `m5-manifest` once merged; 279 → 371 tests; [explainer](../architecture/m5-manifest-and-recovery.md) |
+| M5.5 | ⏭ next | 2–3 | | |
+| M6 · M7 · M8 | ☐ | 10–14 | | |
 | D1–D7 | ☐ | 17–24 | | |
 
 ## 11. The October 2026 engineering review: where each finding is closed
@@ -241,21 +243,20 @@ demonstrations. They are the claim.
 An external review of `main` at `c66adea` (five rounds, 2026-10-08/09) recorded 18 findings,
 `SH-01` to `SH-18`. They are defects, unproven guarantees, measurements and presentation issues;
 **the count is not a bug count**. Each finding has exactly one owner below, so none is open
-without a place to close it. The reproduced defects' evidence is kept in the bug log's
-[open-defect register](../bug-log.md#open-defects).
+without a place to close it. The reproduced defects' evidence is kept in the [bug log](../bug-log.md). **All of them are closed.**
 
 | Id | Kind | Finding, in brief | Closed by |
 |---|---|---|---|
-| SH-01 | defect | writes accepted after a failed flush; `get` and `scan` then disagree after reopen | M5 §2.6 failed state, regression in M5 Step 7 |
-| SH-02 | defect | a failed `open` leaks the table handles it already opened | M5 §2.3 open rollback, Step 7 |
+| SH-01 | defect | writes accepted after a failed flush; `get` and `scan` then disagree after reopen | **fixed** — M5: `d913d0d`; [bug log B8](../bug-log.md#b8--a-failed-flush-and-an-unsynced-directory-could-lose-acknowledged-writes-m1m4) |
+| SH-02 | defect | a failed `open` leaks the table handles it already opened | **fixed** — M5: `d913d0d`; [bug log B7](../bug-log.md#b7--handles-and-file-numbers-the-lifecycle-forgot-m3m4) |
 | SH-03 | wrong claim | the guide promised cursor snapshots | claim corrected in docs and Javadoc (`bd5c350`); real snapshots M7 Step 4 |
-| SH-04 | wrong claim + gap | `SYNC` called power-loss safe without directory syncs | claim corrected in docs (2026-10-10); directory syncs M5 Step 4; simulated in M5 Step 8 |
-| SH-05 | test gap | tests cover narrower failures than the claims (and the WAL had no bit-flip test) | WAL half **fixed** — M4.5 `83d2eae`, `9b1217f`; composed failure histories and metamorphic runs remain M5 Step 8 |
+| SH-04 | wrong claim + gap | `SYNC` called power-loss safe without directory syncs | **fixed** — M5: `a60e2e3`, `10d2ca9`; simulated power loss `8ca534d`, `2aec80a`; [bug log B8](../bug-log.md#b8--a-failed-flush-and-an-unsynced-directory-could-lose-acknowledged-writes-m1m4) |
+| SH-05 | test gap | tests cover narrower failures than the claims (and the WAL had no bit-flip test) | **fixed** — M4.5 `83d2eae`, `9b1217f` (the WAL); M5 `2aec80a` (composed failure histories), `7e39597` (metamorphic runs) |
 | SH-06 | presentation | the README led with planned SQL; the charter overstated "only owners can attribute cost"; a CockroachDB example used RocksDB, not Pebble | corrected in docs (2026-10-10) |
 | SH-07 | measurement | restart, read fan-out, narrow-scan allocation and flush-tail costs are unmeasured | M5.5 Step 2 (baseline); M8 E5, E8 |
 | SH-08 | **P0 defect** | `FULL`→`ZERO` bit: open succeeds empty and deletes the WAL | **fixed** — M4.5: `000f67b`, `7c92861`; [bug log B5](../bug-log.md#b5--one-flipped-bit-in-a-wal-header-lost-every-acknowledged-write-m1m4) |
-| SH-09 | defect | seven-digit file names written but never read back | M5 Step 4 (numeric names, rollover regression) |
-| SH-10 | defect | a cursor whose construction fails keeps its table pins | M5 Step 7 (adopted-Version rollback, regression) |
+| SH-09 | defect | seven-digit file names written but never read back | **fixed** — M5: `744da9a`; [bug log B7](../bug-log.md#b7--handles-and-file-numbers-the-lifecycle-forgot-m3m4) |
+| SH-10 | defect | a cursor whose construction fails keeps its table pins | **fixed** — M5: `1da5dbf`; [bug log B7](../bug-log.md#b7--handles-and-file-numbers-the-lifecycle-forgot-m3m4) |
 | SH-11 | defect | an overflowing 10-byte varint decodes as 0 | **fixed** — M4.5: `84d3183`; bug log B6 |
 | SH-12 | measurement | recovery replays every WAL into one memtable; no memory budget | M8 E8 (measure, then retain, change or defer) |
 | SH-13 | defect | a 2^32 + 9 key length narrows to 9 | **fixed** — M4.5: `a1f64e0`; bug log B6 |

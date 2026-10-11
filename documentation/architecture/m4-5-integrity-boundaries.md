@@ -204,8 +204,10 @@ boundary tests, and removing the sync on close fails 1.
 
 - **Physical power loss is not tested.** M5's `FaultInjectionEnv` simulates it; real hardware is
   argued from fsync ordering only. Directory entries are not yet synced (M5).
+  *(From M5 they are, and simulated power loss is tested: see the
+  [M5 explainer](m5-manifest-and-recovery.md).)*
 - **A garbage power-loss tail is corruption.** A tail that is neither zeros nor a byte-prefix of
   what was written is refused; journaling filesystems in their default modes do not produce one.
 - **v1 tails cost availability**, as §2.5 says.
 - **CRC32C detects accidental damage.** It is not authentication.
-- **Repeated refused opens leak table handles** until M5's open rollback (SH-02).
+- **Repeated refused opens leak table handles** until M5's open rollback (SH-02). *(Fixed in M5.)*

@@ -27,16 +27,90 @@ Its findings are numbered SH-01 to SH-18. Measurements and presentation findings
 the [completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)
 gives every finding's owner.
 
-The review's other seven defects (SH-08, SH-11, SH-13 to SH-16, SH-18) were fixed by M4.5: see
-B5 and B6 below. The five left are M5's.
+All eighteen findings are closed. SH-08, SH-11, SH-13 to SH-16 and SH-18 were fixed by M4.5
+(B5, B6); SH-01, SH-02, SH-04, SH-09 and SH-10 by M5 (B7, B8).
 
 | Id | Defect | Shown by | Fixed in |
 |---|---|---|---|
-| SH-01 | After a failed flush the engine keeps accepting writes. The failed flush's memtable drops out of the read view, and after reopen `get` returns an old value while `scan` returns the new one. Shown only by ignoring the guide's "reopen after `StorageException`"; nothing enforces that advice. | a directory placed at the next table's path; a retried write | [M5](roadmap/m5-manifest-and-recovery.md) §2.6, Step 7 |
-| SH-04 | `SYNC` was documented as power-loss durable, but no directory entry is ever synced: not a new segment's, not a flushed table's. Source finding; no power-loss reproduction. | `WalWriter.open`, `Shale.flushToSSTable` | M5 Steps 4 and 8 |
-| SH-09 | Files are written as `%06d` but discovered as exactly six digits: past number 999,999, the second reopen ignores the newer files and loses data. | `000001.wal` renamed to `999999.wal`, reopened twice | M5 Step 4 |
-| SH-02 | A failed `open` leaks the table handles it opened before failing: ten retries left ten handles. | one valid table, then a corrupt one | M5 Step 7 |
-| SH-10 | A cursor whose construction throws keeps its table references: one handle survived ten failed scans and `close()`. | a data block damaged under a running engine | M5 Step 7 |
+| — | none open | | |
+
+## B8 — A failed flush and an unsynced directory could lose acknowledged writes (M1–M4)
+
+**What was wrong.**
+- **SH-01:** after a flush failed, the engine kept accepting writes. The next memtable switch
+  replaced the failed flush's frozen memtable as the only immutable one, so its writes left the
+  read view; after reopen, `get` and `scan` disagreed about the same key. The write that triggered
+  the flush threw `StorageException`, though it was already logged and applied.
+- **SH-04:** no directory entry was ever synced: not a new WAL segment's, not a flushed table's.
+  `SYNC` forced a record's bytes, but after a power loss the file holding them could be missing,
+  or a flushed table's rename lost while the deletion of its WAL segment survived.
+
+**Consequence.** Acknowledged writes could vanish (SH-04) or reads could contradict each other
+(SH-01): exactly the failures a storage engine exists to prevent.
+
+**Found by** the external review (October 2026): SH-01 by a reproduction that put a directory at
+the next table's path; SH-04 from the source. Neither had a test that could see it: the crash
+tests killed a process, which never loses the page cache.
+
+**Guard:**
+- The **failed state** (ADR-0012 §2.6): any I/O failure in a flush stops writes with
+  `EngineStateException` naming the cause, keeps every published memtable readable, and leaves
+  recovery to a reopen. The triggering write returns normally: it was durable to its mode.
+- **Directory syncs** where a durable name is needed: after creating a segment, after a table's
+  rename (before any edit or deletion depends on it), after `CURRENT` is switched. A flush's
+  table becomes live only through a synced manifest edit.
+- **`FaultInjectionEnv`** simulates power loss at every operation: unsynced bytes dropped (or a
+  seeded prefix kept), unsynced entry changes undone (all of them, or all but the deletes —
+  POSIX orders nothing before a directory sync). The crash matrix runs six workloads through it.
+
+**Fix:** `a60e2e3` (segment creation), `10d2ca9` (directory sync after a flush's rename),
+`d913d0d` (the failed state; flush through the manifest), with `8ca534d` and `ac24de0` (the
+harness).
+
+**Regression:** `./gradlew :shale-core:test --tests '*ShaleManifestRecoveryTest'` and
+`./gradlew :shale-core:crashTest --tests '*ShalePowerLossTest' --tests '*ShaleCrashMatrixTest'` →
+`BUILD SUCCESSFUL`: 12, 2 and 6 tests, 0 failures. `ShalePowerLossTest` lost `key-0` before each
+SH-04 fix; the SH-01 regression fails with `StorageException: write failed` on the engine before
+`d913d0d`; dropping the flush's directory sync, or recording the wrong log number, fails three
+crash-matrix workloads each.
+
+**Remaining limitation:** physical power loss is still argued from fsync ordering, not tested; the
+harness models POSIX semantics, not a particular file system's or device's.
+
+## B7 — Handles and file numbers the lifecycle forgot (M3–M4)
+
+**What was wrong.**
+- **SH-02:** an `open` that failed part-way never released the tables it had already opened: ten
+  failed opens left ten handles.
+- **SH-10:** a cursor whose initial seek threw (a damaged data block) had already retained its
+  tables, and the caller had no cursor to close: one handle survived ten failed scans and
+  `close()`.
+- **SH-09:** names were written `%06d`, a minimum width, but discovered as exactly six digits,
+  parsed from the first six characters and sorted as strings. Past file number 999,999 the
+  second reopen ignored the newer files: the review's history (a WAL renamed to `999999.wal`,
+  reopened twice) lost its write.
+
+**Consequence.** Leaked file handles on every failed open or scan, until the process ran out; and
+silent data loss in any database that lived long enough.
+
+**Found by** the external review's fixtures (October 2026).
+
+**Guard:**
+- `open` records everything it acquires and releases it in reverse if any step throws; the
+  cursor adopts one Version reference and gives it back itself if positioning throws.
+- `FaultInjectionEnv.openHandles()` makes "returns to its baseline" a one-line assertion.
+- File names match `\d{6,}` and sort numerically; a number that does not fit a `long`, or a
+  counter that would pass `Long.MAX_VALUE`, is refused before anything is written.
+
+**Fix:** `744da9a` (SH-09), `1da5dbf` (SH-10), `d913d0d` (SH-02).
+
+**Regression:** `./gradlew :shale-core:test --tests '*ShaleManifestRecoveryTest' --tests
+'*ShaleFileNumberTest' --tests '*ReconcilingCursorTest'` → `BUILD SUCCESSFUL`: 12, 5 and 20
+tests, 0 failures. The SH-02 regression counts one leaked handle on the engine before `d913d0d`,
+and four of the five file-number tests fail before `744da9a`.
+
+**Remaining limitation:** a leaked cursor still pins its Version, and so its tables, until it is
+closed; nothing reclaims it.
 
 ## B6 — Decoders that trusted a length or a count (M0–M4)
 
@@ -116,8 +190,8 @@ The full account, with why the obvious patches were not enough, is the
 framing tests; removing the v1 rule fails 7 of 8 v1 tail tests.
 
 **Remaining limitations:** a genuine crash mid-payload in a pre-M4.5 (v1) segment now needs an
-explicit truncation to open; physical power loss is not tested; directory entries are not synced
-until M5 (SH-04).
+explicit truncation to open; physical power loss is not tested; directory entries were not synced
+until M5 (SH-04, B8).
 
 ## B4 — A guide that promised more than the engine kept (M4)
 
