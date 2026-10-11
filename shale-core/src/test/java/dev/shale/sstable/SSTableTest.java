@@ -66,8 +66,9 @@ class SSTableTest {
   }
 
   @Test
-  void flippingAnyByte_isDetectedOrHarmless() throws IOException {
-    // A small table so bit-flip-at-every-offset is cheap (on-disk-formats.md §3).
+  void flippingAnyBit_isDetectedOrHarmless() throws IOException {
+    // A small table so every bit can be flipped (on-disk-formats.md §3 step 7). A flip is harmless
+    // only if the decoded contents equal the original's; anything else must be CorruptionException.
     Path path = dir.resolve("small.sst");
     try (SSTableWriter writer = SSTableWriter.open(path)) {
       for (int i = 0; i < 5; i++) {
@@ -79,18 +80,21 @@ class SSTableTest {
     List<String> expected = fullyRead(path);
 
     Path victim = dir.resolve("victim.sst");
-    for (int offset = 0; offset < original.length; offset++) {
+    List<String> silent = new ArrayList<>();
+    for (int bit = 0; bit < original.length * 8; bit++) {
       byte[] flipped = original.clone();
-      flipped[offset] ^= (byte) 0xFF; // corrupt one byte
+      flipped[bit / 8] ^= (byte) (1 << (bit % 8));
       Files.write(victim, flipped);
       try {
-        assertThat(fullyRead(victim))
-            .as("flip at offset %d must not silently change the data", offset)
-            .isEqualTo(expected); // no exception → must be byte-identical (harmless)
+        if (!fullyRead(victim).equals(expected)) {
+          silent.add("offset " + bit / 8 + " bit " + bit % 8);
+        }
       } catch (CorruptionException detected) {
         // detected — the acceptable outcome (N4)
       }
     }
+
+    assertThat(silent).as("flips that silently changed the data").isEmpty();
   }
 
   /** Opens the table, drains every entry, and probes a ceiling — reading all blocks (and CRCs). */
