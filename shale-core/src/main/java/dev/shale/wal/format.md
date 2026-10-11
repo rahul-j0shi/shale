@@ -4,9 +4,10 @@ Block-structured write-ahead log, LevelDB-style (ADR-0007). All integers little-
 (ADR-0005). One active segment; segments are named `NNNNNN.wal`.
 
 - **Magic:** `0x5368616C6557414C` ("ShaleWAL"), `fixed64LE`.
-- **FORMAT_VERSION:** `1`.
-- **Block size:** `32768` bytes.
-- **Checksum:** CRC32C (Castagnoli, `java.util.zip.CRC32C`), unmasked, over `type ‖ payload`.
+- **FORMAT_VERSION:** `2` written; `1` and `2` read.
+- **Framing:** blocks, fragments and checksums are the shared log framing, specified in
+  [`internal/log/format.md`](../internal/log/format.md): version 2 adds a checksum over each
+  fragment header (ADR-0024). This page owns the WAL's file header and record payload.
 
 ---
 
@@ -15,18 +16,18 @@ Block-structured write-ahead log, LevelDB-style (ADR-0007). All integers little-
 | Offset | Size | Type       | Field          | Notes                                   |
 |--------|------|------------|----------------|-----------------------------------------|
 | 0      | 8    | fixed64LE  | magic          | `0x5368616C6557414C`                     |
-| 8      | 4    | fixed32LE  | FORMAT_VERSION | `1`                                      |
+| 8      | 4    | fixed32LE  | FORMAT_VERSION | `2` (`1` in segments written before M4.5) |
 | 12     | 4    | zeros      | reserved       | written zero, rejected if non-zero       |
 
 The block stream begins at offset 16. Block *i* occupies file bytes
 `[16 + i·32768, 16 + (i+1)·32768)`.
 
-## 2. Block (32768 bytes)
+## 2. Blocks
 
-A sequence of fragments laid end to end. When fewer than 7 bytes remain in a block, the
-remainder is zero-padded (a `ZERO`-type trailer) and the next fragment begins the next block.
+32768 bytes each, holding fragments end to end; a block tail too short for a fragment header is
+zero padding. See [`internal/log/format.md`](../internal/log/format.md) §2.
 
-## 3. Fragment header (7 bytes) + payload
+## 3. Fragment header — version 1, kept for reading old segments (v2: [`internal/log/format.md`](../internal/log/format.md) §2.1)
 
 | Offset | Size | Type       | Field    | Notes                                         |
 |--------|------|------------|----------|-----------------------------------------------|
@@ -51,7 +52,9 @@ read (`on-disk-formats.md` §2). A logical record is `FULL`, or `FIRST` then zer
 Varints are LevelDB varint32/64 (`dev.shale.internal.coding`). The internal key encoding is
 ADR-0004.
 
-## 5. Worked example — one PUT (`key` → `v`, seq 1)
+## 5. Worked example — one PUT (`key` → `v`, seq 1), in a v1 segment
+
+The same payload in a v2 fragment is worked in [`internal/log/format.md`](../internal/log/format.md) §4.
 
 Internal key = `6B 65 79` (`"key"`) ‖ trailer `fixed64LE((1<<8)|PUT=0x0101)` =
 `6B 65 79 01 01 00 00 00 00 00 00` (11 bytes).
@@ -85,17 +88,20 @@ golden test decodes it and asserts the logical contents (`on-disk-formats.md` §
 **No bit-flip test exists for v1.** Until 2026-10-10 this page claimed one. Its absence hid two
 faults; see §5a.
 
-## 5a. Known limitation of v1 (ADR-0024)
+## 5a. Why v1 is no longer written (ADR-0024)
 
 The fragment CRC covers `type ‖ payload`, not `length`, and the reader decides "torn tail" from
 fields the CRC does not cover:
 - a `FULL` → `ZERO` type bit skips the block before any CRC check (SH-08);
 - a length bit that pushes the payload past the end of the file is read as a torn tail (SH-18).
 
-Either way, recovery succeeds without acknowledged records. A payload CRC cannot settle the
-length case, because the claimed payload is not in the file. M4.5 adds a header checksum
-(v2), and reads v1 under a conservative rule: a complete v1 header with a short payload is an
-*unverifiable tail* and fails `open`, rather than being dropped.
+Either way, recovery succeeded without acknowledged records. A payload CRC cannot settle the
+length case, because the claimed payload is not in the file. Version 2 adds a header checksum,
+so every field used to classify a fragment is verified first. v1 segments are still read, under
+a conservative rule: a `ZERO` type is accepted only as an all-zero unwritten tail (fixed for
+SH-08), and a complete v1 header with a short payload is an *unverifiable tail* that fails
+`open` rather than being dropped (M4.5 Step 5). The v1 goldens `two-puts.wal`, `fragmented.wal`
+and `block-padding.wal` pin the bytes these rules read.
 
 ## 6. Rationale
 
@@ -107,5 +113,5 @@ WAL, memtable, and SSTable share one key format.
 
 | Version | Milestone | Status  | Change                          |
 |---------|-----------|---------|---------------------------------|
-| 1       | M1        | current; *readable only* from M4.5 | Initial block-structured format |
-| 2       | M4.5      | planned | 4-byte CRC32C over each fragment header (ADR-0024) |
+| 1       | M1        | readable | Initial block-structured format |
+| 2       | M4.5      | current  | Log framing v2: a CRC32C over each fragment header (ADR-0024); file header and payload unchanged |
