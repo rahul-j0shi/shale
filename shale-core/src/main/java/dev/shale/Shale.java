@@ -100,6 +100,12 @@ public final class Shale implements StorageBackend {
   /** The live read view. Volatile: one read publishes a consistent snapshot to a reader. */
   private volatile ReadView view;
 
+  /**
+   * Set once by {@link #close()}; every later call is rejected. Volatile so a reader sees it
+   * without the lock; written under {@code writeLock}.
+   */
+  private volatile boolean closed;
+
   private Shale(
       Env env,
       Path directory,
@@ -234,6 +240,7 @@ public final class Shale implements StorageBackend {
   public void put(byte[] userKey, byte[] value, Durability durability) {
     requireArgs(userKey, value, durability);
     synchronized (writeLock) {
+      requireOpen();
       append(new InternalKey(userKey, nextSequence++, ValueType.PUT), value, durability);
     }
   }
@@ -245,6 +252,7 @@ public final class Shale implements StorageBackend {
       throw new IllegalArgumentException("userKey and durability must be non-null");
     }
     synchronized (writeLock) {
+      requireOpen();
       append(new InternalKey(userKey, nextSequence++, ValueType.DELETE), NO_VALUE, durability);
     }
   }
@@ -354,6 +362,7 @@ public final class Shale implements StorageBackend {
     if (userKey == null) {
       throw new IllegalArgumentException("userKey is null");
     }
+    requireOpen();
     byte[] lookup = new InternalKey(userKey, InternalKey.MAX_SEQUENCE, ValueType.FOR_SEEK).encode();
     ReadView snapshot = view; // one volatile read
 
@@ -406,6 +415,7 @@ public final class Shale implements StorageBackend {
    */
   @Override
   public Cursor scan(byte[] fromInclusive, byte[] toExclusive) {
+    requireOpen();
     ReadView snapshot =
         view; // one volatile read: a stable set of sources (not a sequence snapshot)
     List<InternalIterator> sources = new ArrayList<>();
@@ -430,17 +440,34 @@ public final class Shale implements StorageBackend {
     return userComparator;
   }
 
+  /**
+   * Closes the engine: syncs and closes the WAL and drops the engine's reference to every table.
+   * Idempotent: a second call does nothing. Afterwards {@code put}, {@code delete}, {@code get} and
+   * {@code scan} throw {@link EngineStateException}; a cursor opened before keeps reading, because
+   * it holds its own reference to every table it reads.
+   */
   @Override
   public void close() {
     synchronized (writeLock) {
+      if (closed) {
+        return;
+      }
+      closed = true;
       try {
         wal.close();
       } catch (IOException e) {
         throw new StorageException("closing the WAL failed", e);
+      } finally {
+        for (SSTableReader table : view.sstablesNewestFirst()) {
+          table.release();
+        }
       }
-      for (SSTableReader table : view.sstablesNewestFirst()) {
-        table.release();
-      }
+    }
+  }
+
+  private void requireOpen() {
+    if (closed) {
+      throw new EngineStateException("engine is closed");
     }
   }
 
