@@ -1,12 +1,12 @@
 package dev.shale.wal;
 
 import dev.shale.CorruptionException;
+import dev.shale.env.Env;
 import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.log.LogFormat;
 import dev.shale.internal.log.LogReadResult;
 import dev.shale.internal.log.LogReader;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -34,7 +34,12 @@ public final class WalReader {
 
   /** Replays {@code path} into the logical record payloads it holds, in append order. */
   public static List<byte[]> readAll(Path path, RecoveryPolicy policy) throws IOException {
-    LogReadResult result = read(path);
+    return readAll(Env.DEFAULT, path, policy);
+  }
+
+  /** As {@link #readAll(Path, RecoveryPolicy)}, through {@code env}. */
+  public static List<byte[]> readAll(Env env, Path path, RecoveryPolicy policy) throws IOException {
+    LogReadResult result = read(env, path);
     if (result.tail() != LogReadResult.Tail.CLEAN && policy == RecoveryPolicy.STRICT) {
       throw new CorruptionException(
           "torn record at WAL tail of " + path.getFileName(), result.tailOffset(), -1, -1);
@@ -58,7 +63,12 @@ public final class WalReader {
    * </ul>
    */
   public static LogReadResult read(Path path) throws IOException {
-    return read(path.getFileName().toString(), Files.readAllBytes(path));
+    return read(Env.DEFAULT, path);
+  }
+
+  /** As {@link #read(Path)}, through {@code env}. */
+  public static LogReadResult read(Env env, Path path) throws IOException {
+    return read(path.getFileName().toString(), env.readAllBytes(path));
   }
 
   /** {@link #read(Path)} over bytes already in memory; {@code name} appears in error messages. */

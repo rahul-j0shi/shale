@@ -1,13 +1,12 @@
 package dev.shale.internal.log;
 
+import dev.shale.env.Env;
+import dev.shale.env.WritableFile;
 import dev.shale.internal.annotations.NotThreadSafe;
 import dev.shale.internal.coding.Crc32c;
 import dev.shale.internal.coding.LittleEndian;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
 /**
  * Appends logical records to one log file as fragments across 32 KiB blocks ({@code format.md}). It
@@ -15,7 +14,7 @@ import java.nio.file.StandardOpenOption;
  * its own contract requires.
  *
  * <p><b>Threading:</b> single-writer; owned by the log that created it. <b>Ownership:</b> holds a
- * {@link FileChannel} closed by {@link #close()}.
+ * {@link WritableFile} closed by {@link #close()}.
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/db/log_writer.cc">LevelDB
  *     log_writer.cc</a>
@@ -23,12 +22,12 @@ import java.nio.file.StandardOpenOption;
 @NotThreadSafe
 public final class LogWriter implements AutoCloseable {
 
-  private final FileChannel channel;
+  private final WritableFile file;
   private final int headerSize;
   private int blockOffset;
 
-  private LogWriter(FileChannel channel, int version) {
-    this.channel = channel;
+  private LogWriter(WritableFile file, int version) {
+    this.file = file;
     this.headerSize = LogFormat.fragmentHeaderSize(version);
   }
 
@@ -37,16 +36,27 @@ public final class LogWriter implements AutoCloseable {
    * framing {@code version}.
    */
   public static LogWriter create(Path path, long magic, int version) throws IOException {
-    FileChannel channel =
-        FileChannel.open(
-            path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.READ);
-    LogWriter writer = new LogWriter(channel, version);
-    byte[] header = new byte[LogFormat.FILE_HEADER_SIZE];
-    LittleEndian.putFixed64(header, 0, magic);
-    LittleEndian.putFixed32(header, 8, version);
-    // bytes 12..15 stay zero (reserved)
-    writer.writeFully(ByteBuffer.wrap(header));
-    return writer;
+    return create(Env.DEFAULT, path, magic, version);
+  }
+
+  /** As {@link #create(Path, long, int)}, through {@code env}. */
+  public static LogWriter create(Env env, Path path, long magic, int version) throws IOException {
+    WritableFile file = env.newWritableFile(path);
+    boolean created = false;
+    try {
+      LogWriter writer = new LogWriter(file, version);
+      byte[] header = new byte[LogFormat.FILE_HEADER_SIZE];
+      LittleEndian.putFixed64(header, 0, magic);
+      LittleEndian.putFixed32(header, 8, version);
+      // bytes 12..15 stay zero (reserved)
+      file.append(header);
+      created = true;
+      return writer;
+    } finally {
+      if (!created) {
+        file.close(); // a failed header write must not leak the handle (N6)
+      }
+    }
   }
 
   /** Appends one logical record. It reaches the OS page cache, not the disk: see {@link #sync}. */
@@ -58,7 +68,7 @@ public final class LogWriter implements AutoCloseable {
       int leftover = LogFormat.BLOCK_SIZE - blockOffset;
       if (leftover < headerSize) {
         if (leftover > 0) {
-          writeFully(ByteBuffer.wrap(new byte[leftover])); // zero-pad the block tail
+          file.append(new byte[leftover]); // zero-pad the block tail
         }
         blockOffset = 0;
       }
@@ -75,9 +85,9 @@ public final class LogWriter implements AutoCloseable {
 
   /** Forces every record appended so far to stable storage. */
   public void sync() throws IOException {
-    // DURABILITY: after force(false) returns, every record appended so far survives power loss,
-    // provided the file's directory entry is durable too (M5 syncs it; ADR-0024 §7).
-    channel.force(false);
+    // DURABILITY: after sync returns, every record appended so far survives power loss, provided
+    // the file's directory entry is durable too (M5 syncs it; ADR-0024 §7).
+    file.sync();
   }
 
   private static RecordType fragmentType(boolean begin, boolean end) {
@@ -102,17 +112,11 @@ public final class LogWriter implements AutoCloseable {
       int headerCrc = Crc32c.of(frame, 0, LogFormat.CHECKED_HEADER_BYTES);
       LittleEndian.putFixed32(frame, LogFormat.CHECKED_HEADER_BYTES, headerCrc);
     }
-    writeFully(ByteBuffer.wrap(frame));
-  }
-
-  private void writeFully(ByteBuffer buffer) throws IOException {
-    while (buffer.hasRemaining()) {
-      channel.write(buffer);
-    }
+    file.append(frame);
   }
 
   @Override
   public void close() throws IOException {
-    channel.close();
+    file.close();
   }
 }

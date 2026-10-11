@@ -3,6 +3,7 @@ package dev.shale.wal;
 import dev.shale.Clock;
 import dev.shale.Durability;
 import dev.shale.Metrics;
+import dev.shale.env.Env;
 import dev.shale.internal.annotations.NotThreadSafe;
 import dev.shale.internal.log.LogWriter;
 import java.io.IOException;
@@ -35,8 +36,14 @@ public final class WalWriter implements AutoCloseable {
 
   /** Opens a fresh segment at {@code path} (which must not exist) and writes its file header. */
   public static WalWriter open(Path path, Clock clock, Metrics metrics) throws IOException {
+    return open(Env.DEFAULT, path, clock, metrics);
+  }
+
+  /** As {@link #open(Path, Clock, Metrics)}, through {@code env}. */
+  public static WalWriter open(Env env, Path path, Clock clock, Metrics metrics)
+      throws IOException {
     return new WalWriter(
-        LogWriter.create(path, WalFormat.MAGIC, WalFormat.FORMAT_VERSION), clock, metrics);
+        LogWriter.create(env, path, WalFormat.MAGIC, WalFormat.FORMAT_VERSION), clock, metrics);
   }
 
   /** Appends one logical record, then satisfies {@code durability} before returning. */
