@@ -73,7 +73,9 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
       byte[] footerBytes =
           readAt(channel, size - SSTableFormat.FOOTER_SIZE, SSTableFormat.FOOTER_SIZE);
       Footer footer = Footer.decode(footerBytes, size - SSTableFormat.FOOTER_SIZE);
+      validateLayout(footer, size - SSTableFormat.FOOTER_SIZE);
       Block indexBlock = new Block(readBlock(channel, size, footer.indexHandle()));
+      validateDataHandles(indexBlock, footer.metaindexHandle().offsetBytes(), comparator);
       SSTableReader reader = new SSTableReader(path, channel, size, comparator, indexBlock);
       opened = true;
       return reader;
@@ -143,15 +145,93 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     }
   }
 
-  /** Reads and CRC-verifies one block, returning its content (without the trailer). */
+  /**
+   * The v1 file layout, checked before any block is trusted (ADR-0024 §6): the writer lays out data
+   * blocks, then the metaindex, then the index, then the footer, each block followed by its trailer
+   * and nothing in between. A footer whose handles break that order — the review rewrote one to
+   * name the valid, empty metaindex as the index, so the table opened with no data (SH-15) — is
+   * corruption, however good each block's CRC. Checked by subtraction, so nothing can overflow.
+   */
+  private static void validateLayout(Footer footer, long footerStart) {
+    BlockHandle index = footer.indexHandle();
+    BlockHandle metaindex = footer.metaindexHandle();
+    if (!endsAt(index, footerStart)) {
+      throw new CorruptionException(
+          "SSTable index block does not end where the footer begins",
+          index.offsetBytes(),
+          footerStart,
+          index.offsetBytes() + index.sizeBytes() + SSTableFormat.BLOCK_TRAILER_SIZE);
+    }
+    if (!endsAt(metaindex, index.offsetBytes())) {
+      throw new CorruptionException(
+          "SSTable metaindex block does not end where the index block begins",
+          metaindex.offsetBytes(),
+          index.offsetBytes(),
+          metaindex.offsetBytes() + metaindex.sizeBytes() + SSTableFormat.BLOCK_TRAILER_SIZE);
+    }
+  }
+
+  /** Whether {@code handle}'s block, with its trailer, ends exactly at {@code end}. */
+  private static boolean endsAt(BlockHandle handle, long end) {
+    long offset = handle.offsetBytes();
+    long size = handle.sizeBytes();
+    return offset >= 0
+        && size >= 0
+        && offset <= end
+        && size == end - offset - SSTableFormat.BLOCK_TRAILER_SIZE;
+  }
+
+  /**
+   * Every data block handle in the index lies wholly before the metaindex, in increasing offset
+   * order, without overlap, and is encoded with nothing after it. A handle that pointed anywhere
+   * else would read another block in a data block's role.
+   */
+  private static void validateDataHandles(
+      Block indexBlock, long dataRegionEnd, KeyComparator comparator) {
+    Block.Iterator index = indexBlock.iterator(comparator);
+    long previousEnd = 0;
+    for (index.seekToFirst(); index.valid(); index.next()) {
+      BlockHandle.Decoded decoded = BlockHandle.decode(index.value(), 0);
+      BlockHandle handle = decoded.handle();
+      long offset = handle.offsetBytes();
+      long size = handle.sizeBytes();
+      boolean inRegion =
+          offset >= previousEnd
+              && size >= 0
+              && offset <= dataRegionEnd
+              && size <= dataRegionEnd - offset - SSTableFormat.BLOCK_TRAILER_SIZE;
+      if (!inRegion || decoded.nextOffset() != index.value().length) {
+        throw new CorruptionException(
+            "SSTable data block handle outside the data region", offset, dataRegionEnd, size);
+      }
+      previousEnd = offset + size + SSTableFormat.BLOCK_TRAILER_SIZE;
+    }
+  }
+
+  /**
+   * Reads and CRC-verifies one block, returning its content (without the trailer). The handle's
+   * offset and size are checked against the file by subtraction on {@code long}s before anything is
+   * narrowed or allocated, so a malformed size is {@link CorruptionException}, never an {@code
+   * ArithmeticException} or an out-of-bounds read (SH-16).
+   */
   private static byte[] readBlock(FileChannel channel, long fileSize, BlockHandle handle)
       throws IOException {
     long offset = handle.offsetBytes();
-    int size = Math.toIntExact(handle.sizeBytes());
-    int frameSize = size + SSTableFormat.BLOCK_TRAILER_SIZE;
-    if (offset < 0 || offset + frameSize > fileSize) {
-      throw new CorruptionException("block overruns file", offset, fileSize, offset + frameSize);
+    long contentSize = handle.sizeBytes();
+    if (offset < 0 || offset > fileSize) {
+      throw new CorruptionException(
+          "SSTable block offset outside the file", offset, fileSize, offset);
     }
+    long room = fileSize - offset - SSTableFormat.BLOCK_TRAILER_SIZE;
+    if (contentSize < 0 || contentSize > room) {
+      throw new CorruptionException("SSTable block overruns the file", offset, room, contentSize);
+    }
+    if (contentSize > Integer.MAX_VALUE - SSTableFormat.BLOCK_TRAILER_SIZE) {
+      throw new CorruptionException(
+          "SSTable block too large to read", offset, Integer.MAX_VALUE, contentSize);
+    }
+    int size = (int) contentSize;
+    int frameSize = size + SSTableFormat.BLOCK_TRAILER_SIZE;
     byte[] frame = readAt(channel, offset, frameSize);
     int storedCrc = LittleEndian.getFixed32(frame, size + 1);
     int actualCrc = Crc32c.of(frame, 0, size + 1); // over content ‖ type
