@@ -74,6 +74,20 @@ public final class Varints {
   }
 
   /**
+   * Decodes a {@code varint32} field at {@code offset}: like {@link #get}, but a value of 2^32 or
+   * more is corruption. The value stays a {@code long}, so a caller can check it against the bytes
+   * remaining <em>before</em> narrowing it to an {@code int} (ADR-0024 §6).
+   */
+  public static Decoded getUnsigned32(byte[] src, int offset) {
+    Decoded decoded = get(src, offset);
+    if ((decoded.value() & ~0xFFFF_FFFFL) != 0) {
+      throw new CorruptionException(
+          "varint32 field exceeds 32 bits", offset, 0xFFFF_FFFFL, decoded.value());
+    }
+    return decoded;
+  }
+
+  /**
    * A decoded varint and the offset just past it.
    *
    * @param value the decoded value

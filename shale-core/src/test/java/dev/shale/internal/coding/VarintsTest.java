@@ -100,6 +100,24 @@ class VarintsTest {
   }
 
   @Test
+  void getUnsigned32_maximum_decodes() {
+    byte[] buf = new byte[5];
+    Varints.put(buf, 0, 0xFFFF_FFFFL);
+
+    assertThat(Varints.getUnsigned32(buf, 0).value()).isEqualTo(0xFFFF_FFFFL);
+  }
+
+  @Test
+  void getUnsigned32_twoToThe32_isCorruption() {
+    byte[] buf = new byte[5];
+    Varints.put(buf, 0, 1L << 32);
+
+    assertThatThrownBy(() -> Varints.getUnsigned32(buf, 0))
+        .isInstanceOf(CorruptionException.class)
+        .hasMessageContaining("varint32");
+  }
+
+  @Test
   void size_matchesBytesWritten() {
     assertThat(Varints.size(0)).isEqualTo(1);
     assertThat(Varints.size(127)).isEqualTo(1);
