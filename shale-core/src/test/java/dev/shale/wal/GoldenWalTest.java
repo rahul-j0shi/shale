@@ -36,17 +36,17 @@ class GoldenWalTest {
   }
 
   /**
-   * The three v1 fixtures added at M4.5 Step 2, written by the M4 writer before M4.5 changed the
-   * framing. Each must decode to exactly its {@link WalFixtures} definition: every record, in
-   * order, with nothing torn (they are read {@code STRICT}).
+   * The v1 fixtures written by the M4 writer before M4.5 changed the framing, and the v2 fixtures
+   * written by the M4.5 writer. Each must decode to exactly its {@link WalFixtures} definition:
+   * every record, in order, with nothing torn (they are read {@code STRICT}). The v1 ones are what
+   * keeps segments written before M4.5 readable.
    */
   @ParameterizedTest(name = "{0}")
-  @MethodSource("v1Fixtures")
-  void golden_v1Fixture_decodesToItsDefinition(String file, List<WalFixtures.Mutation> expected)
+  @MethodSource("fixtures")
+  void golden_fixture_decodesToItsDefinition(String file, List<WalFixtures.Mutation> expected)
       throws IOException {
     List<WalRecordCodec.Decoded> decoded =
-        WalReader.readAll(
-                Path.of("src/test/resources/golden/wal/v1/" + file), RecoveryPolicy.STRICT)
+        WalReader.readAll(Path.of("src/test/resources/golden/wal/" + file), RecoveryPolicy.STRICT)
             .stream()
             .map(WalRecordCodec::decode)
             .toList();
@@ -63,11 +63,15 @@ class GoldenWalTest {
         .containsExactlyElementsOf(expected.stream().map(WalFixtures.Mutation::value).toList());
   }
 
-  static List<Arguments> v1Fixtures() {
+  static List<Arguments> fixtures() {
     return List.of(
-        Arguments.of("two-puts.wal", WalFixtures.TWO_PUTS),
-        Arguments.of("fragmented.wal", WalFixtures.FRAGMENTED),
-        Arguments.of("block-padding.wal", WalFixtures.BLOCK_PADDING));
+        Arguments.of("v1/two-puts.wal", WalFixtures.TWO_PUTS),
+        Arguments.of("v1/fragmented.wal", WalFixtures.FRAGMENTED),
+        Arguments.of("v1/block-padding.wal", WalFixtures.BLOCK_PADDING),
+        Arguments.of("v2/single-put.wal", WalFixtures.SINGLE_PUT),
+        Arguments.of("v2/two-puts.wal", WalFixtures.TWO_PUTS),
+        Arguments.of("v2/fragmented.wal", WalFixtures.FRAGMENTED),
+        Arguments.of("v2/block-padding.wal", WalFixtures.BLOCK_PADDING_V2));
   }
 
   private static byte[] ascii(String value) {

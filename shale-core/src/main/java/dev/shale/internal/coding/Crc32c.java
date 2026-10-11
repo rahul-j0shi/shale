@@ -22,6 +22,18 @@ public final class Crc32c {
     return (int) crc.getValue();
   }
 
+  /**
+   * CRC32C over one {@code prefix} byte followed by {@code data[offset, offset+length)}: a log
+   * fragment's checksum covers its type byte and its payload, which are not adjacent once the
+   * header grows past seven bytes.
+   */
+  public static int of(byte prefix, byte[] data, int offset, int length) {
+    CRC32C crc = new CRC32C();
+    crc.update(prefix);
+    crc.update(data, offset, length);
+    return (int) crc.getValue();
+  }
+
   /** CRC32C over the whole array. */
   public static int of(byte[] data) {
     return of(data, 0, data.length);

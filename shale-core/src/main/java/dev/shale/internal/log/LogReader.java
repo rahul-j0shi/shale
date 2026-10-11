@@ -113,6 +113,9 @@ public final class LogReader {
         // only when the header itself is all zero, so a normal read stays linear.
         return LogReadResult.Tail.UNWRITTEN;
       }
+      if (version >= LogFormat.VERSION_2) {
+        verifyHeaderCrc();
+      }
       int length = (data[pos + 4] & 0xFF) | ((data[pos + 5] & 0xFF) << 8);
       int typeCode = data[pos + 6] & 0xFF;
       if (typeCode == RecordType.ZERO.code()) {
@@ -128,10 +131,12 @@ public final class LogReader {
       }
       int fragmentEnd = pos + headerSize + length;
       if (fragmentEnd > data.length) {
+        // In v2 this length passed its header checksum, so a payload past the end of the file is a
+        // genuine torn append. In v1 it is unverified, and may be a damaged length (SH-18).
         return LogReadResult.Tail.TORN_PAYLOAD;
       }
       int storedCrc = LittleEndian.getFixed32(data, pos);
-      int actualCrc = Crc32c.of(data, pos + 6, 1 + length);
+      int actualCrc = Crc32c.of(data[pos + 6], data, pos + headerSize, length);
       if (storedCrc != actualCrc) {
         throw new CorruptionException(
             logName + " fragment CRC mismatch", pos, storedCrc, actualCrc);
@@ -142,6 +147,20 @@ public final class LogReader {
         endOffset = pos;
       }
       return null;
+    }
+
+    /**
+     * Checks a v2 fragment's {@code headerCrc} before any of its fields is used. A mismatch is
+     * corruption wherever it occurs, the last fragment included: a crash leaves a byte-prefix of
+     * what was written, and a prefix long enough to hold the whole header holds its checksum too.
+     */
+    private void verifyHeaderCrc() {
+      int stored = LittleEndian.getFixed32(data, pos + LogFormat.CHECKED_HEADER_BYTES);
+      int actual = Crc32c.of(data, pos, LogFormat.CHECKED_HEADER_BYTES);
+      if (stored != actual) {
+        throw new CorruptionException(
+            logName + " fragment header CRC mismatch", pos, stored, actual);
+      }
     }
 
     /** Reassembles fragments, tracking the FIRST/MIDDLE/LAST state. */

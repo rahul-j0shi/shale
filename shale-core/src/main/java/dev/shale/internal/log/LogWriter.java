@@ -94,8 +94,14 @@ public final class LogWriter implements AutoCloseable {
     frame[5] = (byte) (length >>> 8);
     frame[6] = (byte) type.code();
     System.arraycopy(payload, offset, frame, headerSize, length);
-    int payloadCrc = Crc32c.of(frame, 6, 1 + length); // over the type byte and the payload
+    int payloadCrc = Crc32c.of(frame[6], frame, headerSize, length); // over type, then payload
     LittleEndian.putFixed32(frame, 0, payloadCrc);
+    if (headerSize > LogFormat.CHECKED_HEADER_BYTES) {
+      // v2: a checksum over the seven bytes above, so a reader can trust length and type before
+      // it uses them to decide anything — including that a short file is a torn tail (ADR-0024).
+      int headerCrc = Crc32c.of(frame, 0, LogFormat.CHECKED_HEADER_BYTES);
+      LittleEndian.putFixed32(frame, LogFormat.CHECKED_HEADER_BYTES, headerCrc);
+    }
     writeFully(ByteBuffer.wrap(frame));
   }
 

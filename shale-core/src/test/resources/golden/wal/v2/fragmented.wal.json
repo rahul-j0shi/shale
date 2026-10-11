@@ -1,0 +1,17 @@
+{
+  "format": "wal",
+  "formatVersion": 2,
+  "description": "One record spanning three blocks (FIRST, MIDDLE, LAST), then a small FULL record in the third block.",
+  "fileBytes": 80091,
+  "fragments": [
+    { "offset": 16, "payloadBytes": 32757, "type": "FIRST" },
+    { "offset": 32784, "payloadBytes": 32757, "type": "MIDDLE" },
+    { "offset": 65552, "payloadBytes": 14501, "type": "LAST" },
+    { "offset": 80064, "payloadBytes": 16, "type": "FULL" }
+  ],
+  "recordEndOffsets": [80064, 80091],
+  "records": [
+    { "userKey": "big", "sequenceNumber": 1, "valueType": "PUT", "value": "80000 bytes; byte i = (31 * i + 7) mod 251" },
+    { "userKey": "small", "sequenceNumber": 2, "valueType": "PUT", "value": "v" }
+  ]
+}

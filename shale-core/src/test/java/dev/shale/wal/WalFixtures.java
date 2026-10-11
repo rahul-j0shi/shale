@@ -25,6 +25,9 @@ final class WalFixtures {
     }
   }
 
+  /** {@code key}→{@code v} at sequence 1: the worked example of {@code wal/format.md} §5. */
+  static final List<Mutation> SINGLE_PUT = List.of(new Mutation("key", 1, ascii("v")));
+
   /**
    * The engine-level fixture of the October 2026 review: {@code A}→{@code ack-A} and {@code
    * B}→{@code ack-B}, as {@code Shale.put(..., SYNC)} writes them into a fresh segment. In v1 it is
@@ -62,7 +65,30 @@ final class WalFixtures {
           new Mutation("p2", 2, patterned(32_768 - V1_PADDING_BLOCK_1 - 7 - 14)),
           new Mutation("p3", 3, ascii("tail")));
 
+  /**
+   * Padding bytes the v2 writer leaves at the end of blocks 0 and 1 of {@link #BLOCK_PADDING_V2}.
+   */
+  static final int V2_PADDING_BLOCK_0 = 3;
+
+  static final int V2_PADDING_BLOCK_1 = 10;
+
+  /**
+   * {@link #BLOCK_PADDING} resized for v2's 11-byte fragment headers: block 0 ends with 3 padding
+   * bytes and block 1 with 10, one less than a header. Block 0: 32768 − 3 − 11 − 14 = 32740 value
+   * bytes; block 1: 32768 − 10 − 11 − 14 = 32733.
+   */
+  static final List<Mutation> BLOCK_PADDING_V2 =
+      List.of(
+          new Mutation("p1", 1, patterned(32_768 - V2_PADDING_BLOCK_0 - 11 - 14)),
+          new Mutation("p2", 2, patterned(32_768 - V2_PADDING_BLOCK_1 - 11 - 14)),
+          new Mutation("p3", 3, ascii("tail")));
+
   private WalFixtures() {}
+
+  /** The block-padding fixture for a framing {@code version}. */
+  static List<Mutation> blockPadding(int version) {
+    return version == 1 ? BLOCK_PADDING : BLOCK_PADDING_V2;
+  }
 
   /** Deterministic, non-repeating-looking bytes, so a misplaced block cannot decode by accident. */
   static byte[] patterned(int size) {

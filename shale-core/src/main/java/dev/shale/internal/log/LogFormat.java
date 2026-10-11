@@ -15,8 +15,14 @@ public final class LogFormat {
 
   public static final int BLOCK_SIZE = 32_768;
 
-  /** {@code payloadCrc(4) ‖ length(2) ‖ type(1)}: ADR-0007. */
+  /** {@code payloadCrc(4) ‖ length(2) ‖ type(1)}: ADR-0007. Read, never written. */
   public static final int VERSION_1 = 1;
+
+  /** Version 1's seven bytes, then {@code headerCrc(4)} over them: ADR-0024. */
+  public static final int VERSION_2 = 2;
+
+  /** Bytes of a fragment header that {@code headerCrc} covers, in version 2. */
+  public static final int CHECKED_HEADER_BYTES = 7;
 
   private LogFormat() {}
 
@@ -24,6 +30,7 @@ public final class LogFormat {
   public static int fragmentHeaderSize(int version) {
     return switch (version) {
       case VERSION_1 -> 7;
+      case VERSION_2 -> 11;
       default -> throw new IllegalArgumentException("unknown log framing version " + version);
     };
   }
