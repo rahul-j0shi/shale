@@ -171,7 +171,8 @@ least significant bit first), then each non-null non-key column in schema order:
 ```java
 public final class Database implements AutoCloseable {
   public static Database open(Path dir, DatabaseOptions options);
-  public static Database open(Path dir, DatabaseOptions options, Clock clock, Metrics metrics, Env env);
+  public static Database open(Path dir, DatabaseOptions options, Clock clock, Metrics metrics);
+                                                    // options carry the Env, as ShaleOptions does
   public Transaction begin(boolean readOnly, Durability durability);
   public Catalog catalog();
   public TableDescriptor createTable(TableSpec spec);        // DDL: autocommit, DDL lock

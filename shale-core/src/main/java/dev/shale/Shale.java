@@ -1,5 +1,6 @@
 package dev.shale;
 
+import dev.shale.env.Env;
 import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.InternalKeyComparator;
@@ -17,14 +18,11 @@ import dev.shale.wal.WalReader;
 import dev.shale.wal.WalRecordCodec;
 import dev.shale.wal.WalWriter;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 /**
  * The single-node LSM engine (M3 slice): every mutation is logged to the WAL before it is applied
@@ -44,7 +42,8 @@ import java.util.stream.Stream;
  * SSTable readers with no lock (concurrency-and-resources.md §2). Flush is synchronous on the write
  * path at M3 (a background flush thread and write stalls arrive at M5.5); the manifest and the
  * reference-counted delete lifecycle arrive at M5. <b>Ownership:</b> owns a {@link WalWriter} and
- * one reference to each {@link SSTableReader}, all released by {@link #close()}.
+ * one reference to each {@link SSTableReader}, all released by {@link #close()}. Every file
+ * operation goes through the {@link Env} it was opened with (ADR-0012).
  *
  * @see "Petrov, Database Internals, ch. 5 (recovery) and ch. 7 (LSM flush)"
  * @see <a href="https://github.com/google/leveldb/blob/main/db/db_impl.cc">LevelDB db_impl.cc</a>
@@ -54,9 +53,10 @@ public final class Shale implements StorageBackend {
 
   /**
    * Default memtable size that triggers a flush: 4 MiB, matching LevelDB's {@code
-   * write_buffer_size}.
+   * write_buffer_size}. The same value as {@link ShaleOptions#defaults()}.
    */
-  public static final long DEFAULT_WRITE_BUFFER_SIZE_BYTES = 4L * 1024 * 1024;
+  public static final long DEFAULT_WRITE_BUFFER_SIZE_BYTES =
+      ShaleOptions.defaults().writeBufferSizeBytes();
 
   private static final Pattern WAL_SEGMENT = Pattern.compile("\\d{6}\\.wal");
   private static final Pattern SSTABLE_FILE = Pattern.compile("\\d{6}\\.sst");
@@ -75,6 +75,7 @@ public final class Shale implements StorageBackend {
   private static final long SKIPLIST_SEED = 0x5EED_5EEDL;
 
   private final Object writeLock = new Object();
+  private final Env env;
   private final Path directory;
   private final Clock clock;
   private final Metrics metrics;
@@ -100,6 +101,7 @@ public final class Shale implements StorageBackend {
   private volatile ReadView view;
 
   private Shale(
+      Env env,
       Path directory,
       Clock clock,
       Metrics metrics,
@@ -111,6 +113,7 @@ public final class Shale implements StorageBackend {
       long nextFileNumber,
       long nextSequence,
       ReadView view) {
+    this.env = env;
     this.directory = directory;
     this.clock = clock;
     this.metrics = metrics;
@@ -125,34 +128,49 @@ public final class Shale implements StorageBackend {
   }
 
   /**
-   * Opens (or recovers) an engine rooted at {@code directory} with the default write-buffer size.
+   * Opens (or recovers) an engine rooted at {@code directory} with {@link ShaleOptions#defaults()}.
    */
   public static Shale open(Path directory, Clock clock, Metrics metrics) throws IOException {
-    return open(directory, clock, metrics, DEFAULT_WRITE_BUFFER_SIZE_BYTES);
+    return open(directory, ShaleOptions.defaults(), clock, metrics);
   }
 
   /**
-   * Opens (or recovers) an engine, flushing the active memtable to an SSTable once it reaches
-   * {@code writeBufferSizeBytes}. Recovery loads the existing SSTables, replays any WAL into a
-   * memtable, flushes that memtable to a fresh SSTable, and deletes the replayed segments — so a
-   * reopen leaves the log empty and all recovered data in tables.
+   * Opens (or recovers) an engine with the default options but the given write-buffer size.
+   *
+   * @see ShaleOptions#writeBufferSizeBytes()
    */
   public static Shale open(Path directory, Clock clock, Metrics metrics, long writeBufferSizeBytes)
       throws IOException {
-    if (writeBufferSizeBytes <= 0) {
-      throw new IllegalArgumentException("writeBufferSizeBytes must be positive");
-    }
-    Files.createDirectories(directory);
+    return open(
+        directory,
+        ShaleOptions.defaults().withWriteBufferSizeBytes(writeBufferSizeBytes),
+        clock,
+        metrics);
+  }
+
+  /**
+   * Opens (or recovers) an engine with {@code options}, doing every file operation through {@link
+   * ShaleOptions#env()}: a test passes a fault-injecting one (ADR-0012). The active memtable is
+   * flushed to an SSTable once it reaches {@link ShaleOptions#writeBufferSizeBytes()}. Recovery
+   * loads the existing SSTables, replays any WAL into a memtable, flushes that memtable to a fresh
+   * SSTable, and deletes the replayed segments — so a reopen leaves the log empty and all recovered
+   * data in tables.
+   */
+  public static Shale open(Path directory, ShaleOptions options, Clock clock, Metrics metrics)
+      throws IOException {
+    Env env = options.env();
+    long writeBufferSizeBytes = options.writeBufferSizeBytes();
+    env.createDirectories(directory);
     KeyComparator comparator = BytewiseComparator.INSTANCE;
     InternalKeyComparator ordering = new InternalKeyComparator(comparator);
-    deleteTempTables(directory); // clean any incomplete table from a crashed flush
+    deleteTempTables(env, directory); // clean any incomplete table from a crashed flush
 
     // Load complete SSTables oldest→newest, building a newest-first live list.
     List<SSTableReader> sstablesNewestFirst = new ArrayList<>();
     long maxSequence = 0;
     long maxFileNumber = 0;
-    for (Path table : filesInOrder(directory, SSTABLE_FILE)) {
-      SSTableReader reader = SSTableReader.open(table, ordering);
+    for (Path table : filesInOrder(env, directory, SSTABLE_FILE)) {
+      SSTableReader reader = SSTableReader.open(env, table, ordering);
       sstablesNewestFirst.add(0, reader);
       maxSequence = Math.max(maxSequence, maxSequenceOf(reader));
       maxFileNumber = Math.max(maxFileNumber, numberOf(table));
@@ -162,10 +180,10 @@ public final class Shale implements StorageBackend {
     // the recovery flush writes a table or any segment is deleted, so a rejected open leaves every
     // input as it was (ADR-0024 §4).
     Memtable recovered = new SkiplistMemtable(comparator, SKIPLIST_SEED);
-    List<Path> walSegments = filesInOrder(directory, WAL_SEGMENT);
+    List<Path> walSegments = filesInOrder(env, directory, WAL_SEGMENT);
     for (int i = 0; i < walSegments.size(); i++) {
       Path segment = walSegments.get(i);
-      for (byte[] payload : replay(segment, i == walSegments.size() - 1)) {
+      for (byte[] payload : replay(env, segment, i == walSegments.size() - 1)) {
         WalRecordCodec.Decoded decoded = WalRecordCodec.decode(payload);
         recovered.add(decoded.internalKey().encode(), decoded.value());
         maxSequence = Math.max(maxSequence, decoded.internalKey().sequenceNumber());
@@ -176,17 +194,19 @@ public final class Shale implements StorageBackend {
     long nextFileNumber = maxFileNumber + 1;
     if (recovered.sizeBytes() > 0) {
       Path table = directory.resolve(sstableName(nextFileNumber++));
-      sstablesNewestFirst.add(0, flushToSSTable(table, recovered, ordering, metrics));
+      sstablesNewestFirst.add(0, flushToSSTable(env, table, recovered, ordering));
+      countFlush(metrics, recovered);
     }
     for (Path segment : walSegments) {
-      Files.delete(segment); // D3: the recovery table is durable before its log is dropped
+      env.delete(segment); // D3: the recovery table is durable before its log is dropped
     }
 
     Path activeSegment = directory.resolve(segmentName(nextFileNumber++));
-    WalWriter wal = WalWriter.open(activeSegment, clock, metrics);
+    WalWriter wal = WalWriter.open(env, activeSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(comparator, SKIPLIST_SEED);
     ReadView view = new ReadView(active, List.of(), List.copyOf(sstablesNewestFirst));
     return new Shale(
+        env,
         directory,
         clock,
         metrics,
@@ -256,25 +276,26 @@ public final class Shale implements StorageBackend {
     // Roll to a fresh active memtable and WAL segment, and publish the frozen memtable as immutable
     // so readers keep seeing its data while the flush runs.
     activeWalSegment = directory.resolve(segmentName(nextFileNumber++));
-    wal = WalWriter.open(activeWalSegment, clock, metrics);
+    wal = WalWriter.open(env, activeWalSegment, clock, metrics);
     Memtable active = new SkiplistMemtable(userComparator, SKIPLIST_SEED);
     view = new ReadView(active, List.of(frozen), sstables);
     metrics.increment("memtable.switch.count", 1);
 
     Path table = directory.resolve(sstableName(nextFileNumber++));
-    SSTableReader flushed = flushToSSTable(table, frozen, ordering, metrics);
+    SSTableReader flushed = flushToSSTable(env, table, frozen, ordering);
+    countFlush(metrics, frozen);
     view = new ReadView(active, List.of(), prepend(flushed, sstables));
     // D3: the SSTable is durable (force in finish) and installed (atomic rename) before the WAL
     // segment that also held this data is deleted.
-    Files.delete(frozenSegment);
+    env.delete(frozenSegment);
   }
 
   /** Writes a memtable to {@code finalPath} via a temp file + atomic rename, and opens a reader. */
   private static SSTableReader flushToSSTable(
-      Path finalPath, Memtable memtable, InternalKeyComparator ordering, Metrics metrics)
+      Env env, Path finalPath, Memtable memtable, InternalKeyComparator ordering)
       throws IOException {
     Path tempPath = finalPath.resolveSibling(finalPath.getFileName() + TEMP_SUFFIX);
-    try (SSTableWriter writer = SSTableWriter.open(tempPath);
+    try (SSTableWriter writer = SSTableWriter.open(env, tempPath);
         InternalIterator entries = memtable.iterator()) {
       // Streamed, not materialised: a flush that first copied the whole memtable into a list
       // would double its peak footprint at exactly the moment memory pressure triggered it.
@@ -283,10 +304,13 @@ public final class Shale implements StorageBackend {
       }
       writer.finish(); // fsync
     }
-    Files.move(tempPath, finalPath, StandardCopyOption.ATOMIC_MOVE); // install atomically
+    env.rename(tempPath, finalPath); // install atomically
+    return SSTableReader.open(env, finalPath, ordering);
+  }
+
+  private static void countFlush(Metrics metrics, Memtable flushed) {
     metrics.increment("flush.count", 1);
-    metrics.increment("flush.bytes", memtable.sizeBytes());
-    return SSTableReader.open(finalPath, ordering);
+    metrics.increment("flush.bytes", flushed.sizeBytes());
   }
 
   /**
@@ -406,8 +430,8 @@ public final class Shale implements StorageBackend {
    * a crash cannot have cut it short; if one ends torn, its bytes were lost or damaged some other
    * way, and dropping its tail would silently lose writes. That is corruption (N4).
    */
-  private static List<byte[]> replay(Path segment, boolean newest) throws IOException {
-    LogReadResult result = WalReader.read(segment);
+  private static List<byte[]> replay(Env env, Path segment, boolean newest) throws IOException {
+    LogReadResult result = WalReader.read(env, segment);
     if (!newest && result.tail() != LogReadResult.Tail.CLEAN) {
       throw new CorruptionException(
           "WAL segment "
@@ -439,20 +463,19 @@ public final class Shale implements StorageBackend {
     return max;
   }
 
-  private static List<Path> filesInOrder(Path directory, Pattern namePattern) throws IOException {
-    try (Stream<Path> entries = Files.list(directory)) {
-      return entries
-          .filter(path -> namePattern.matcher(path.getFileName().toString()).matches())
-          .sorted(Comparator.comparing(path -> path.getFileName().toString()))
-          .toList();
-    }
+  private static List<Path> filesInOrder(Env env, Path directory, Pattern namePattern)
+      throws IOException {
+    return env.children(directory).stream()
+        .filter(name -> namePattern.matcher(name).matches())
+        .sorted(Comparator.naturalOrder())
+        .map(directory::resolve)
+        .toList();
   }
 
-  private static void deleteTempTables(Path directory) throws IOException {
-    try (Stream<Path> entries = Files.list(directory)) {
-      for (Path path :
-          entries.filter(p -> p.getFileName().toString().endsWith(TEMP_SUFFIX)).toList()) {
-        Files.delete(path);
+  private static void deleteTempTables(Env env, Path directory) throws IOException {
+    for (String name : env.children(directory)) {
+      if (name.endsWith(TEMP_SUFFIX)) {
+        env.delete(directory.resolve(name));
       }
     }
   }

@@ -169,7 +169,7 @@ power loss stays untested, argued from fsync ordering only (ADR-0024 §7).
 
 | Change | Kind |
 |---|---|
-| `ShaleOptions` (record: `writeBufferSizeBytes`, `manifestRolloverBytes`; `defaults()`, `withX`) and `Shale.open(Path, ShaleOptions, Clock, Metrics[, Env])`; existing overloads delegate | new API |
+| `ShaleOptions` (record: `writeBufferSizeBytes`, `manifestRolloverBytes`, `env`; `defaults()`, `withX`) and `Shale.open(Path, ShaleOptions, Clock, Metrics)`; existing overloads delegate. The `Env` is an option, as in LevelDB's `Options::env` | new API |
 | `dev.shale.env`: `Env`, `WritableFile`, `ReadableFile`, `PosixEnv` | new SPI |
 | `dev.shale.manifest`: `VersionEdit`, `VersionEditCodec`, `ManifestWriter`, `ManifestReader`, `CurrentFile`, `FileMetadata`, `Version`, `VersionSet` | new API |
 | `close()` is idempotent; `put`, `delete`, `get`, `scan` after it throw `EngineStateException` | behaviour |

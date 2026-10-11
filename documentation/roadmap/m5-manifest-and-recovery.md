@@ -274,7 +274,7 @@ harness that proves the durability claim under simulated power loss, not only pr
 | `ReconcilingCursor` | `dev.shale.iterator` | takes one *adopted* `ReferenceCounted` instead of retaining a list | 7 |
 | `CorruptionException` | `dev.shale` | adds a constructor with a `Path`; the message names the file | 4 |
 | `ShaleOptions` (record: `writeBufferSizeBytes`, `manifestRolloverBytes`; `defaults()`, `withX`) | `dev.shale` | public | 2 |
-| `Shale` | `dev.shale` | adds public `open(Path, ShaleOptions, Clock, Metrics)` and `open(Path, ShaleOptions, Clock, Metrics, Env)`; existing overloads delegate | 2, 7 |
+| `Shale` | `dev.shale` | adds public `open(Path, ShaleOptions, Clock, Metrics)`; the `Env` is an option (`ShaleOptions.env`), as in LevelDB's `Options`; existing overloads delegate | 2, 7 |
 
 ## 4. Steps
 
@@ -309,14 +309,16 @@ Each step is one branch off `main`, merged green before the next starts. Commit 
 3. `refactor(wal)`, `refactor(sstable)`: `WalWriter`, `WalReader`, `SSTableWriter` and
    `SSTableReader` take an `Env`. Their existing public `open` overloads delegate with
    `Env.DEFAULT`.
-4. `feat(api)`: `ShaleOptions`, a public record with `writeBufferSizeBytes` and
-   `manifestRolloverBytes`. It has `static ShaleOptions defaults()` (4 MiB and 4 MiB) and a
+4. `feat(api)`: `ShaleOptions`, a public record with `writeBufferSizeBytes`,
+   `manifestRolloverBytes` and `env`. It has `static ShaleOptions defaults()` (4 MiB, 4 MiB,
+   `Env.DEFAULT`) and a
    `withX(...)` method per field; the compact constructor rejects non-positive sizes. Later
    milestones add fields, so callers construct it through `defaults()`, never the canonical
    constructor (say so in its Javadoc). Add public `Shale.open(Path, ShaleOptions, Clock,
    Metrics)`; the existing `open` overloads delegate to it.
-5. `refactor(api)`: `Shale` does all file operations through its `Env`; add public
-   `open(Path, ShaleOptions, Clock, Metrics, Env)`.
+5. `refactor(api)`: `Shale` does all file operations through `options.env()`. *(As built: the
+   `Env` is an option, as in LevelDB's `Options::env`, not a fifth `open` parameter — which also
+   keeps `open` within checkstyle's four-parameter limit.)*
 
 **Done when:** all 161 existing tests pass unchanged, and `grep -rn "FileChannel.open\|Files\."`
 in `shale-core/src/main` finds only `PosixEnv`.
