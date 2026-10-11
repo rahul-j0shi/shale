@@ -9,6 +9,7 @@ import dev.shale.internal.log.LogReadResult;
 import dev.shale.iterator.InternalIterator;
 import dev.shale.iterator.MergingIterator;
 import dev.shale.iterator.ReconcilingCursor;
+import dev.shale.iterator.ReferenceCounted;
 import dev.shale.memtable.Memtable;
 import dev.shale.memtable.SkiplistMemtable;
 import dev.shale.sstable.SSTableReader;
@@ -473,12 +474,22 @@ public final class Shale implements StorageBackend {
     }
     // Source order only breaks ties the merge cannot actually see — sequence numbers are unique,
     // so precedence is already in the keys. It is kept newest-first to match the read view.
+    List<SSTableReader> tables = snapshot.sstablesNewestFirst();
+    tables.forEach(SSTableReader::retain);
+    ReferenceCounted pinned =
+        new ReferenceCounted() {
+          @Override
+          public void retain() {
+            throw new UnsupportedOperationException("adopted once by the cursor");
+          }
+
+          @Override
+          public void release() {
+            tables.forEach(SSTableReader::release);
+          }
+        };
     return new ReconcilingCursor(
-        new MergingIterator(sources, ordering),
-        userComparator,
-        fromInclusive,
-        toExclusive,
-        List.copyOf(snapshot.sstablesNewestFirst()));
+        new MergingIterator(sources, ordering), userComparator, fromInclusive, toExclusive, pinned);
   }
 
   @Override

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.shale.BytewiseComparator;
+import dev.shale.CorruptionException;
 import dev.shale.Cursor;
 import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.InternalKeyComparator;
@@ -193,11 +194,10 @@ class ReconcilingCursorTest {
   }
 
   @Test
-  void close_releasesEveryPinnedTableExactlyOnce() {
-    // N6: the cursor takes one reference per table it can read from, and gives them all back.
-    // Counting release calls is the only way to prove the pairing without a live SSTable.
-    CountingTable first = new CountingTable();
-    CountingTable second = new CountingTable();
+  void close_releasesTheAdoptedReferenceExactlyOnce() {
+    // N6: the cursor adopts the reference its caller took — it does not retain again — and gives
+    // it back once. Counting calls is the only way to prove the pairing without a live SSTable.
+    CountingTable pinned = new CountingTable();
 
     ReconcilingCursor cursor =
         new ReconcilingCursor(
@@ -205,17 +205,31 @@ class ReconcilingCursorTest {
             BytewiseComparator.INSTANCE,
             null,
             null,
-            List.of(first, second));
-    // Constructing pinned them; nothing is released however long the caller holds the cursor.
-    assertThat(first.retains).isEqualTo(1);
-    assertThat(second.retains).isEqualTo(1);
-    assertThat(first.releases).isZero();
+            pinned);
+    assertThat(pinned.retains).as("adopted, not retained").isZero();
+    assertThat(pinned.releases).isZero();
 
     cursor.close();
-    cursor.close(); // a second close must not double-release a table another reader still holds
+    cursor.close(); // a second close must not double-release a reference another reader holds
 
-    assertThat(first.releases).isEqualTo(1);
-    assertThat(second.releases).isEqualTo(1);
+    assertThat(pinned.releases).isEqualTo(1);
+  }
+
+  @Test
+  void aCursorWhoseFirstSeekThrows_givesBackWhatItAdopted() {
+    // SH-10: a damaged block makes the initial seek throw. The caller never receives a cursor to
+    // close, so the constructor must release the reference and close the merge itself.
+    CountingTable pinned = new CountingTable();
+    ThrowingIterator damaged = new ThrowingIterator();
+
+    assertThatThrownBy(
+            () ->
+                new ReconcilingCursor(
+                    damaged, BytewiseComparator.INSTANCE, bytes("a"), null, pinned))
+        .isInstanceOf(CorruptionException.class);
+
+    assertThat(pinned.releases).isEqualTo(1);
+    assertThat(damaged.closed).isTrue();
   }
 
   @Test
@@ -236,7 +250,7 @@ class ReconcilingCursorTest {
             BytewiseComparator.INSTANCE,
             key(100),
             key(103),
-            List.of())) {
+            null)) {
       for (; cursor.isValid(); cursor.next()) {
         found.add(new String(cursor.key(), StandardCharsets.US_ASCII));
       }
@@ -303,6 +317,46 @@ class ReconcilingCursorTest {
     return String.format("key%03d", i).getBytes(StandardCharsets.US_ASCII);
   }
 
+  /** A source whose every seek fails as a damaged data block's would. */
+  private static final class ThrowingIterator implements InternalIterator {
+    private boolean closed;
+
+    @Override
+    public void seek(byte[] internalKey) {
+      throw new CorruptionException("SSTable block CRC mismatch", 0, 1, 2);
+    }
+
+    @Override
+    public void seekToFirst() {
+      throw new CorruptionException("SSTable block CRC mismatch", 0, 1, 2);
+    }
+
+    @Override
+    public boolean valid() {
+      return false;
+    }
+
+    @Override
+    public void next() {
+      throw new IllegalStateException("not positioned");
+    }
+
+    @Override
+    public byte[] internalKey() {
+      throw new IllegalStateException("not positioned");
+    }
+
+    @Override
+    public byte[] value() {
+      throw new IllegalStateException("not positioned");
+    }
+
+    @Override
+    public void close() {
+      closed = true;
+    }
+  }
+
   /** Counts its reference operations, so the retain/release pairing can be asserted directly. */
   private static final class CountingTable implements ReferenceCounted {
     private int retains;
@@ -327,7 +381,7 @@ class ReconcilingCursorTest {
         BytewiseComparator.INSTANCE,
         fromInclusive,
         toExclusive,
-        List.of());
+        null);
   }
 
   /** Drains a cursor into {@code userKey=value} strings. */

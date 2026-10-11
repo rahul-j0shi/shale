@@ -5,7 +5,6 @@ import dev.shale.KeyComparator;
 import dev.shale.internal.annotations.NotThreadSafe;
 import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.ValueType;
-import java.util.List;
 
 /**
  * Turns a merged internal-key stream into the user-visible answer, applying the three rules of LSM
@@ -26,11 +25,14 @@ import java.util.List;
  * even when it happens to live in an older source. That is what makes the rule safe as the LSM
  * grows more places to look — a memtable, a queue of immutable memtables, tables at many levels.
  *
- * <p><b>Ownership (N6).</b> Constructing the cursor {@link ReferenceCounted#retain retains} every
- * SSTable it can read from; {@link #close()} releases them and closes the merge. A streaming cursor
- * reads live file handles for its whole life, so <b>closing it is mandatory</b>: an unclosed cursor
- * pins files, and from M5 — when the manifest starts deleting tables — that pin is the only thing
- * standing between a long scan and a file deleted underneath it.
+ * <p><b>Ownership (N6).</b> The cursor <em>adopts</em> one reference — from M5, to the {@code
+ * Version} whose tables it reads — and the merged stream: it does not retain again, and {@link
+ * #close()} releases the reference and closes the merge. Ownership passes when the constructor is
+ * called, so if positioning the cursor throws (a damaged block, say), the constructor gives both
+ * back before rethrowing: until M5 a cursor that failed there kept its tables for good (SH-10). A
+ * streaming cursor reads live file handles for its whole life, so <b>closing it is mandatory</b>:
+ * an unclosed cursor pins files, and that pin is the only thing standing between a long scan and a
+ * table the manifest has already removed.
  *
  * <p><b>Threading:</b> {@code @NotThreadSafe}; one owning thread.
  *
@@ -43,7 +45,7 @@ public final class ReconcilingCursor implements Cursor {
   private final InternalIterator merged;
   private final KeyComparator userComparator;
   private final byte[] toExclusive;
-  private final List<ReferenceCounted> pinnedTables;
+  private final ReferenceCounted pinned;
 
   /** The user key under the cursor, or null when exhausted or closed. Single-thread owned. */
   private byte[] currentKey;
@@ -57,39 +59,45 @@ public final class ReconcilingCursor implements Cursor {
   private boolean closed;
 
   /**
-   * Positions a cursor at the first live key ≥ {@code fromInclusive}, retaining {@code
-   * pinnedTables} for its lifetime.
+   * Positions a cursor at the first live key ≥ {@code fromInclusive}, adopting {@code merged} and
+   * {@code pinned}: both are this cursor's from the call on, and released by {@link #close()} — or
+   * by this constructor, if positioning throws.
    *
-   * @param merged the merged stream over every source; this cursor takes ownership and closes it
+   * @param merged the merged stream over every source
    * @param userComparator orders user keys, for deduplication and the upper bound
    * @param fromInclusive lower bound, or null to start at the first key
    * @param toExclusive upper bound, or null to run to the end
-   * @param pinnedTables resources to retain now and release on close
+   * @param pinned a reference already taken on what the sources read, or null if they pin nothing
    */
   public ReconcilingCursor(
       InternalIterator merged,
       KeyComparator userComparator,
       byte[] fromInclusive,
       byte[] toExclusive,
-      List<ReferenceCounted> pinnedTables) {
+      ReferenceCounted pinned) {
     this.merged = merged;
     this.userComparator = userComparator;
     this.toExclusive = toExclusive == null ? null : toExclusive.clone();
-    this.pinnedTables = List.copyOf(pinnedTables);
-    for (ReferenceCounted table : this.pinnedTables) {
-      table.retain();
-    }
+    this.pinned = pinned;
 
-    // The lower bound is a seek, not a filter: every source skips straight to it. Seeking at the
-    // maximal trailer lands before every version of the bound key, so an inclusive bound stays
-    // inclusive (ADR-0004).
-    if (fromInclusive == null) {
-      merged.seekToFirst();
-    } else {
-      merged.seek(
-          new InternalKey(fromInclusive, InternalKey.MAX_SEQUENCE, ValueType.FOR_SEEK).encode());
+    boolean positioned = false;
+    try {
+      // The lower bound is a seek, not a filter: every source skips straight to it. Seeking at the
+      // maximal trailer lands before every version of the bound key, so an inclusive bound stays
+      // inclusive (ADR-0004).
+      if (fromInclusive == null) {
+        merged.seekToFirst();
+      } else {
+        merged.seek(
+            new InternalKey(fromInclusive, InternalKey.MAX_SEQUENCE, ValueType.FOR_SEEK).encode());
+      }
+      advanceToNextLiveKey();
+      positioned = true;
+    } finally {
+      if (!positioned) {
+        close(); // the caller never gets a cursor to close: give back what was adopted (SH-10)
+      }
     }
-    advanceToNextLiveKey();
   }
 
   @Override
@@ -123,9 +131,12 @@ public final class ReconcilingCursor implements Cursor {
     closed = true;
     currentKey = null;
     currentValue = null;
-    merged.close();
-    for (ReferenceCounted table : pinnedTables) {
-      table.release();
+    try {
+      merged.close();
+    } finally {
+      if (pinned != null) {
+        pinned.release();
+      }
     }
   }
 
