@@ -41,6 +41,10 @@ Use exactly these forms. Do not invent synonyms. Do not use two names for one co
 | `Footer` | `Trailer`, `Header` | Fixed-size tail of an SSTable |
 | `BloomFilter` | `Filter` alone | Probabilistic membership filter |
 | torn tail | `partial write`, `truncated record` (for this meaning) | The end of a log left mid-append by a crash: bytes never fully written, so never acknowledged, and safe to drop. Never damaged bytes — those are corruption (ADR-0024) |
+| unwritten tail | `zero tail`, `hole` | A log tail of all-zero bytes: space a filesystem allocated but never wrote, exposed after a crash. A kind of torn tail (ADR-0024) |
+| unverifiable tail | `ambiguous tail` | In a v1 log segment, a complete fragment header whose payload runs past the end of the file: v1 cannot tell a torn append from a damaged length, so it is refused (ADR-0024 §3) |
+| header checksum (`headerCrc`) | `header CRC` in prose is fine; never `hdrCrc` | Log framing v2's CRC32C over a fragment header's first seven bytes, verified before the header is used |
+| log framing (`dev.shale.internal.log`) | `log format` (ambiguous with a log's records) | The block-and-fragment layer every Shale log shares: the WAL, and from M5 the manifest |
 | `RecoveryPolicy` | `RepairMode`, `Lenient` | The caller's choice of what recovery does with a torn tail: `TRUNCATE_TAIL` or `STRICT` |
 | durability mode (`Durability`) | `syncMode`, `fsyncLevel` | What an acknowledged write survives: `NONE`, `SYNC`, `GROUP` (ADR-0008) |
 | group commit | `batched fsync`, `coalescing` | One fsync covering many writers' records (ADR-0008; M5.5) |

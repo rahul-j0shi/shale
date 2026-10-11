@@ -202,11 +202,11 @@ look superficially similar at the tail of a file:
   silently skipped or repaired — `CorruptionException` carries the file offset and expected/actual
   values (CLAUDE.md N4). A present-but-wrong byte is a real fault; a missing byte is a torn tail.
 
-> **Known gap (found 2026-10, fixed by M4.5).** The reader learns *whether* a byte is missing from
-> the `length` field, which no CRC covers, and it takes the `ZERO` branch before checking any CRC.
-> So one flipped bit in a header can turn corruption into a "torn tail" (SH-08, SH-18). Recovery
-> then silently drops acknowledged records. The flowchart below is the M1 code as built; the
-> decision table that replaces it is [ADR-0024](../adr/0024-recovery-integrity-boundaries.md) §2.
+> **Since M4.5.** This reader learned *whether* a byte was missing from the `length` field, which
+> no CRC covered, and took the `ZERO` branch before checking any CRC. So one flipped bit in a header
+> turned corruption into a "torn tail", and recovery silently dropped acknowledged records (SH-08,
+> SH-18). The flowchart below is the M1 code as built. What replaced it, and why, is the
+> [M4.5 case study](m4-5-integrity-boundaries.md).
 
 ```mermaid
 flowchart TB

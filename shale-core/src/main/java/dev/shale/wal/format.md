@@ -98,9 +98,10 @@ fields the CRC does not cover:
 Either way, recovery succeeded without acknowledged records. A payload CRC cannot settle the
 length case, because the claimed payload is not in the file. Version 2 adds a header checksum,
 so every field used to classify a fragment is verified first. v1 segments are still read, under
-a conservative rule: a `ZERO` type is accepted only as an all-zero unwritten tail (fixed for
-SH-08), and a complete v1 header with a short payload is an *unverifiable tail* that fails
-`open` rather than being dropped (M4.5 Step 5). The v1 goldens `two-puts.wal`, `fragmented.wal`
+a conservative rule: a `ZERO` type is accepted only as an all-zero unwritten tail (SH-08), and a
+complete v1 header with a short payload is an *unverifiable tail* that fails `open` rather than
+being dropped (SH-18). The [M4.5 case study](../../../../../../../documentation/architecture/m4-5-integrity-boundaries.md)
+tells the whole story. The v1 goldens `two-puts.wal`, `fragmented.wal`
 and `block-padding.wal` pin the bytes these rules read.
 
 ## 6. Rationale

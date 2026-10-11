@@ -9,40 +9,43 @@ cost seen. **ShaleDB** is where it is going: a relational database on top of it,
 `EXPLAIN ANALYZE` traces each statement's cost from the SQL down to the disk.
 
 > **Status.**
-> - **The engine is built through M4.** It recovers from process crashes; power-loss durability
->   arrives at M5.
-> - **Its known defects are listed openly.** Two of them let a one-bit fault in a WAL header
->   silently lose acknowledged writes. The [open-defect register](documentation/bug-log.md#open-defects)
->   names each, with the milestone that fixes it. **M4.5, next, fixes the recovery path.**
+> - **The engine is built through M4.5.** It recovers from process crashes, and recovery decides
+>   only on bytes it has verified; power-loss durability arrives at M5.
+> - **Its known defects are listed openly.** The five left, all lifecycle and directory-sync
+>   gaps, are in the [open-defect register](documentation/bug-log.md#open-defects), each with the
+>   milestone that fixes it. **M5 is next.**
+> - **How a one-bit fault once lost acknowledged writes, and why the obvious fix was not enough**,
+>   is the [M4.5 case study](documentation/architecture/m4-5-integrity-boundaries.md).
 > - **SQL, transactions and the PostgreSQL protocol (D1–D7) are planned, not built.**
 
 ## What exists today
 
 | Component | State |
 |---|---|
-| WAL — LevelDB block log, CRC32C per fragment, torn-tail policy, replay recovery | ✅ M1 · ⚠️ its header fields are unprotected (SH-08, SH-18) |
+| WAL — LevelDB block log, CRC32C per fragment, torn-tail policy, replay recovery | ✅ M1 |
 | Memtable — hand-written skiplist, lock-free readers, immutable handoff | ✅ M2 |
-| SSTable — prefix-compressed blocks, restart points, index, versioned footer | ✅ M3 · ⚠️ some structural fields are trusted unchecked (SH-14 to SH-16) |
+| SSTable — prefix-compressed blocks, restart points, index, versioned footer | ✅ M3 |
 | Flush — fsync and atomic rename *before* the WAL segment is dropped (no directory sync yet) | ✅ M3 |
 | Reads — heap-based multi-way merge, reconciliation, tombstones, pinned tables; cursors are weakly consistent | ✅ M4 |
-| Integrity boundaries — a checksum on every log header, verified tails, decoder validation | ⏭ M4.5 |
-| Manifest, safe file deletion, directory syncs, failed state · concurrent write path | ❌ M5 · M5.5 |
+| Integrity boundaries — a checksum on every log header, tails classified only on verified bytes, the newest-segment rule, validated decoders | ✅ M4.5 |
+| Manifest, safe file deletion, directory syncs, failed state · concurrent write path | ⏭ M5 · ❌ M5.5 |
 | Compaction · batches, snapshots, bloom filters · benchmarks | ❌ M6 · M7 · M8 |
 | Record layer · SQL · joins · transactions | ❌ D1–D4 |
 | PostgreSQL protocol · `EXPLAIN ANALYZE` cost accounting · demo | ❌ D5–D7 |
 
 **How it is verified today, and against what.** Each test covers one failure model, and no test
 stands in for another (ADR-0024 §7):
-- **Torn tail:** a crash test truncates the WAL at every byte offset and asserts that recovery
-  yields exactly the complete records.
-- **Malformed bytes:** a bit-flip test changes every byte of an SSTable and asserts each change
-  is detected or provably harmless. The WAL has no such test yet; M4.5 adds one at every bit.
+- **Torn tail:** the WAL is cut at every byte offset; recovery must yield exactly the complete
+  records and name how the file ended.
+- **Malformed bytes:** every bit of every log header, and of small log files and SSTables, is
+  flipped, and each flip must be detected (or, in an SSTable, provably harmless). Every decoder
+  also meets malformed structures whose checksums are valid.
 - **Format stability:** golden files freeze the on-disk formats.
 - **Clean restart:** a model harness runs thousands of random operations against a `TreeMap`
   oracle, restarting the engine mid-sequence.
 - **Power loss:** not tested yet. M5 simulates it at every file operation.
 
-`./gradlew build crashTest` is green on JDK 25 (161 tests).
+`./gradlew build crashTest` is green on JDK 25 (279 tests).
 
 ## Use it
 
@@ -82,9 +85,8 @@ try (Shale db = Shale.open(Path.of("data"), Clock.system(), Metrics.NOOP)) {
 > **Not production software.** Shale is a study project with no production use, and with known
 > defects listed openly. The guide's
 > [limitations table](documentation/guides/embedding-shale.md#10-current-limitations--read-before-relying-on-it)
-> says what is missing or broken today and which milestone fixes it. Most importantly: until M4.5,
-> one flipped bit in a WAL header can silently lose acknowledged writes; until M5, `SYNC` is not
-> power-loss durable; until M6 there is no compaction, so disk use only grows.
+> says what is missing or broken today and which milestone fixes it. Most importantly: until M5,
+> `SYNC` is not power-loss durable; until M6 there is no compaction, so disk use only grows.
 
 ## Why: ShaleDB, a see-through database
 
@@ -139,11 +141,11 @@ designs per milestone: [`documentation/architecture/`](documentation/architectur
 ## Roadmap
 
 Strictly ordered; each milestone ends in a tested, tagged artifact.
-- **M4.5 is next.** It responds to an
+- **M4.5 is done.** It responded to an
   [external engineering review](documentation/roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)
-  (October 2026): the log gets a header checksum, recovery classifies a tail only from verified
+  (October 2026): the log has a header checksum, recovery classifies a tail only from verified
   bytes, and every decoder validates its fields
-  ([ADR-0024](documentation/adr/0024-recovery-integrity-boundaries.md)).
+  ([ADR-0024](documentation/adr/0024-recovery-integrity-boundaries.md)). **M5 is next.**
 - **Shale 1.0** (the engine, measured) is M8; **v1.0** (the database and demo) is D7.
 
 The [completion plan](documentation/roadmap/completion-plan.md) has the per-milestone plans,

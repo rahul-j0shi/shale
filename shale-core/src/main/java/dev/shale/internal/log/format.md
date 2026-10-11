@@ -65,7 +65,7 @@ Starting after the last good fragment, the **first row that matches decides**:
 | `headerCrc` mismatch | **corruption** | — (no header checksum) |
 | type not 1–4 (v1: including `ZERO`) | corruption | corruption |
 | `length` larger than the block has room for | corruption | corruption |
-| the payload runs past the end of the file | torn payload: **torn tail** | **unverifiable** (ADR-0024 §3; M4.5 Step 5) |
+| the payload runs past the end of the file | torn payload: **torn tail** | **unverifiable**: refused (ADR-0024 §3) |
 | `payloadCrc` mismatch | corruption | corruption |
 | fragment out of sequence (`MIDDLE` with no `FIRST`, …) | corruption | corruption |
 | the file ends inside an open `FIRST…` record | torn tail | torn tail |

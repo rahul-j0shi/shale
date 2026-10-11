@@ -5,6 +5,26 @@ One entry per milestone, newest first. Each is tagged on `main`; the as-built de
 [`documentation/adr/`](documentation/adr/). What comes next is in the
 [plan](documentation/roadmap/completion-plan.md).
 
+## M4.5 — Integrity boundaries · `m4.5-integrity`
+
+Recovery, and every decoder, now decides only on bytes it has verified (ADR-0024). The
+[case study](documentation/architecture/m4-5-integrity-boundaries.md) tells why.
+- **WAL format v2** (log framing v2): a CRC32C over each fragment header, checked before its
+  length or type is used. Two one-bit header faults that made M4 open empty and delete the WAL
+  (SH-08, SH-18) now fail loudly. v1 segments are still read: `ZERO` only as an all-zero tail, and
+  a short v1 payload refused as *unverifiable* with an explicit operator procedure.
+- **The recovery boundary:** only the newest WAL segment may end torn; a segment is synced when it
+  closes; a refused `open` changes no file.
+- **The decoder contract:** varints bounded at 64 bits (SH-11) and at 32 for `varint32` fields;
+  WAL record lengths checked in context (SH-13); SSTable restart arrays (SH-14), file layout
+  (SH-15) and block handles (SH-16) validated, all through `CorruptionException`.
+- **The shared log framing** moves to `dev.shale.internal.log`, ready for M5's manifest.
+  `RecordType` moves with it.
+- **Tests the WAL never had:** every bit of every header, every truncation offset, the review's
+  header matrix, malformed structures with valid checksums; v1 and v2 goldens.
+- **The bootstrap** fetches JDK 25 on Linux and macOS, x64 and ARM; CI runs it on three platforms.
+- 279 tests (271 fast, 8 in the crash tier), up from 161. Format change: WAL v2.
+
 ## M4 — Multi-SSTable reads and the merge iterator · `m4-merge`
 
 - One read seam, `InternalIterator` (ADR-0011), implemented by the skiplist, the tree memtable and

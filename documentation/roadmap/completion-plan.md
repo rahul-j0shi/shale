@@ -88,7 +88,7 @@ estimate of 3–6, so recalibrate after M5 (§10).
 | Id | Milestone | Plan | ADR | Format change (N2) | New module | Est. | Tag |
 |---|---|---|---|---|---|---|---|
 | M4.5 | Integrity boundaries | [plan](m4-5-integrity-boundaries.md) | 0024 | WAL v2 (header CRC) | — | 2–3 | `m4.5-integrity` |
-| M5 | Manifest + recovery | [plan](m5-manifest-and-recovery.md) | 0012 | manifest v1 (on log framing v2) | — | 3–4 | `m5-manifest` |
+| M5 | Manifest + recovery | [plan](m5-manifest-and-recovery.md) | 0012 | manifest v2 (born on log framing v2; no v1) | — | 3–4 | `m5-manifest` |
 | M5.5 | Concurrent write path | [plan](m5-5-concurrent-write-path.md) | 0014 | — | — | 2–3 | `m5.5-write-path` |
 | M6 | Compaction | [plan](m6-compaction.md) | 0015 | — (M5 defined levels and tag 5) | — | 4–6 | `m6-compaction` |
 | M7 | Batches, snapshots, bloom, statistics | [plan](m7-batches-snapshots-bloom.md) | 0016, 0017 | WAL v3, SSTable v2 | — | 3–4 | `m7-mvcc-bloom` |
@@ -231,8 +231,8 @@ demonstrations. They are the claim.
 | Id | Status | Estimate (weeks) | Actual | Notes |
 |---|---|---|---|---|
 | M0–M4 | ✅ | 3–6 | ~2.5 | tag `m4-merge`; see the [changelog](../../CHANGELOG.md) |
-| M4.5 | ⏭ next | 2–3 | | ADR-0024 already accepted; start at Step 0 |
-| M5 | ☐ | 3–4 | | write ADR-0012 first |
+| M4.5 | ✅ | 2–3 | ~2 days | tag `m4.5-integrity` once merged; 18 commits, 161 → 279 tests |
+| M5 | ⏭ next | 3–4 | | write ADR-0012 first |
 | M5.5 · M6 · M7 · M8 | ☐ | 12–17 | | |
 | D1–D7 | ☐ | 17–24 | | |
 
@@ -248,22 +248,22 @@ without a place to close it. The reproduced defects' evidence is kept in the bug
 |---|---|---|---|
 | SH-01 | defect | writes accepted after a failed flush; `get` and `scan` then disagree after reopen | M5 §2.6 failed state, regression in M5 Step 7 |
 | SH-02 | defect | a failed `open` leaks the table handles it already opened | M5 §2.3 open rollback, Step 7 |
-| SH-03 | wrong claim | the guide promised cursor snapshots | claim corrected in docs (2026-10-10) and Javadoc (M4.5 Step 1); real snapshots M7 Step 4 |
+| SH-03 | wrong claim | the guide promised cursor snapshots | claim corrected in docs and Javadoc (`bd5c350`); real snapshots M7 Step 4 |
 | SH-04 | wrong claim + gap | `SYNC` called power-loss safe without directory syncs | claim corrected in docs (2026-10-10); directory syncs M5 Step 4; simulated in M5 Step 8 |
-| SH-05 | test gap | tests cover narrower failures than the claims (and the WAL had no bit-flip test) | M4.5 Steps 4–5 (framing matrices); M5 Step 8 (composed failure histories, metamorphic runs) |
+| SH-05 | test gap | tests cover narrower failures than the claims (and the WAL had no bit-flip test) | WAL half **fixed** — M4.5 `83d2eae`, `9b1217f`; composed failure histories and metamorphic runs remain M5 Step 8 |
 | SH-06 | presentation | the README led with planned SQL; the charter overstated "only owners can attribute cost"; a CockroachDB example used RocksDB, not Pebble | corrected in docs (2026-10-10) |
 | SH-07 | measurement | restart, read fan-out, narrow-scan allocation and flush-tail costs are unmeasured | M5.5 Step 2 (baseline); M8 E5, E8 |
-| SH-08 | **P0 defect** | `FULL`→`ZERO` bit: open succeeds empty and deletes the WAL | M4.5 Step 3 (v1 rule), Step 4 (v2 header CRC) |
+| SH-08 | **P0 defect** | `FULL`→`ZERO` bit: open succeeds empty and deletes the WAL | **fixed** — M4.5: `000f67b`, `7c92861`; [bug log B5](../bug-log.md#b5--one-flipped-bit-in-a-wal-header-lost-every-acknowledged-write-m1m4) |
 | SH-09 | defect | seven-digit file names written but never read back | M5 Step 4 (numeric names, rollover regression) |
 | SH-10 | defect | a cursor whose construction fails keeps its table pins | M5 Step 7 (adopted-Version rollback, regression) |
-| SH-11 | defect | an overflowing 10-byte varint decodes as 0 | M4.5 Step 3 |
+| SH-11 | defect | an overflowing 10-byte varint decodes as 0 | **fixed** — M4.5: `84d3183`; bug log B6 |
 | SH-12 | measurement | recovery replays every WAL into one memtable; no memory budget | M8 E8 (measure, then retain, change or defer) |
-| SH-13 | defect | a 2^32 + 9 key length narrows to 9 | M4.5 Step 3 |
-| SH-14 | defect | a restart count overflows the offset arithmetic | M4.5 Step 6 |
-| SH-15 | defect | a footer can alias the metaindex as the index | M4.5 Step 6 |
-| SH-16 | defect | bad handle sizes escape as `ArithmeticException` or `ArrayIndexOutOfBoundsException` | M4.5 Step 6 |
+| SH-13 | defect | a 2^32 + 9 key length narrows to 9 | **fixed** — M4.5: `a1f64e0`; bug log B6 |
+| SH-14 | defect | a restart count overflows the offset arithmetic | **fixed** — M4.5: `a01c028`; bug log B6 |
+| SH-15 | defect | a footer can alias the metaindex as the index | **fixed** — M4.5: `1d79264`; bug log B6 |
+| SH-16 | defect | bad handle sizes escape as `ArithmeticException` or `ArrayIndexOutOfBoundsException` | **fixed** — M4.5: `1d79264`; bug log B6 |
 | SH-17 | measurement | an empty scan or a missing key reads one block per table | M5.5 Step 2 (baseline counts); M6 Step 2 (range selection for `get` *and* `scan`); M7 Step 5 (counters) |
-| SH-18 | **P0 defect** | a length bit makes a damaged header look like a torn tail: open succeeds empty and deletes the WAL | M4.5 Steps 4–5 (ADR-0024) |
+| SH-18 | **P0 defect** | a length bit makes a damaged header look like a torn tail: open succeeds empty and deletes the WAL | **fixed** — M4.5: `7c92861` (v2), `9b1217f` (v1), `7f6573d`; bug log B5 |
 
 **How a finding's status changes.** It moves only with evidence, in this form: *work step →
 finding ids → commit → command and its output → remaining limitation*.

@@ -86,16 +86,16 @@ process crash.
 - **The gap:** the record's bytes are fsynced before `put` returns, but the directory entry of a
   newly created log segment or flushed table is not. A power loss soon after a memtable switch or
   a flush can lose the file.
-- **`NONE`:** the most recent writes may be lost. Today a power loss across a segment switch can
-  even lose `NONE` writes from before a later `SYNC`, because a closed segment is not synced.
-  M4.5 syncs a segment when it closes.
+- **`NONE`:** the most recent writes may be lost. A segment is synced when it is closed at a
+  memtable switch, so a `NONE` write in an older segment is never lost while a later `SYNC` write
+  survives.
 - **From M5:** directory syncs, and a simulated filesystem that drops unsynced data and directory
   entries at every file operation, so `SYNC` then means "survives power loss", with a test behind
   it. Physical power loss is never tested; that claim rests on fsync ordering.
 
 After a process crash, recovery restores a **prefix** of your writes, never a later write without
-an earlier one. **One exception remains open until M4.5:** a single flipped bit in a log fragment's
-header can be mistaken for a torn tail, and recovery then silently drops acknowledged writes.
+an earlier one. A damaged log header is never mistaken for a torn tail: every fragment header
+carries its own checksum, checked before recovery believes it (ADR-0024).
 [Embedding Shale §5](guides/embedding-shale.md#5-durability-what-each-mode-promises) says which
 failure each claim is tested against.
 
@@ -253,20 +253,20 @@ Kafka, Elasticsearch/Lucene, Neo4j and H2.
 By tests designed to find the bugs storage engines actually have. See the
 [testing conventions](conventions/testing.md).
 
-**Crash consistency:** the write-ahead log is truncated at *every byte offset*, and recovery must
-return exactly the complete records.
+**Crash consistency:** the write-ahead log is cut at *every byte offset*, and recovery must return
+exactly the complete records, and say how the file ended.
 
-**Corruption:** every byte of an SSTable is flipped, and each case must be detected or proven
-harmless.
+**Corruption:** every bit of every log header, and of small log files and SSTables, is flipped.
+Each flip must be detected, or for SSTables proven harmless. Every decoder also meets malformed
+structures whose checksums are valid.
 
-**Where the tests fall short, and how that was found.** An external engineering review
-(October 2026) showed that the tests covered less than the claims:
-- the WAL had no bit-flip test, and two different one-bit header faults pass recovery silently;
-- several decoders trust a length or a count before checking it.
-
-Each finding has a reproduction and an owning plan step
+**How the tests were found wanting, and fixed.** An external engineering review (October 2026)
+showed that the tests covered less than the claims: the WAL had no bit-flip test, two different
+one-bit header faults passed recovery silently, and several decoders trusted a length or a count
+before checking it. M4.5 fixed them; the [bug log](bug-log.md) has each one, and the
+[M4.5 case study](architecture/m4-5-integrity-boundaries.md) tells the story. Every other finding
+has an owning plan step
 ([completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
-M4.5 is the response: a checksum on every log header, and a bit-flip test at every bit.
 
 **Model checking:** thousands of random operations, with restarts, run against a `TreeMap`
 oracle.
@@ -275,8 +275,6 @@ oracle.
 unnoticed.
 
 **Planned:**
-- **M4.5:** every header bit and every truncation offset of the log, and malformed structures
-  with valid checksums for every decoder.
 - **M5:** a simulated filesystem crashes and loses power at every file operation.
 - **M6:** a soak test runs for hours.
 - **D2:** SQL is checked in the sqllogictest format against PostgreSQL's semantics.
@@ -290,11 +288,10 @@ offset, and the expected and actual values; M5 adds the file name. Deciding whet
 the operator's call, made explicitly. A storage engine that hides corruption is worse than one
 that crashes.
 
-**Today that rule has two known holes:**
-- a damaged WAL header type or length can be read as a torn tail and dropped silently;
-- some malformed SSTable fields surface as other runtime exceptions.
-
-M4.5 closes both (ADR-0024).
+A refused `open` leaves every file exactly as it was. The one case with a documented way out is a
+WAL segment written before M4.5 whose last record cannot be verified:
+[Embedding Shale §7](guides/embedding-shale.md#7-errors) says how an operator accepts that loss,
+explicitly.
 
 ### How would you scale it beyond one machine?
 

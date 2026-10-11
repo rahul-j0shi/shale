@@ -32,8 +32,8 @@ to [Embedding Shale](guides/embedding-shale.md); for questions, the [FAQ](faq.md
 |---|---|
 | **Use the engine** in your program | [Embedding Shale](guides/embedding-shale.md) (its §10 first: the known limits) → the [FAQ](faq.md) |
 | **Understand how an LSM database works**, from this code | the [charter](roadmap/charter.md) §1 and §5 → [project-scope](architecture/project-scope.md) → the as-built explainers M0 → M4 in order, each beside its ADR and `format.md` → the [glossary](conventions/naming.md#1-glossary--canonical-spellings) whenever a term is new |
-| **Evaluate the project** in ten minutes | the [README](../README.md) → [charter §5](roadmap/charter.md#5-the-end-goal-what-someone-sees-at-v10) (the end goal and how it is checked) → the [bug log](bug-log.md), open defects included → [completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed) → one explainer, e.g. [M4](architecture/m4-merge-iterator.md) |
-| **Build the next milestone** | [CONTRIBUTING](../CONTRIBUTING.md) (setup and the loop) → [CLAUDE.md](../CLAUDE.md) (the non-negotiables) → [completion plan §10](roadmap/completion-plan.md#10-status) (the first milestone not ✅: **M4.5**) → its plan, and the ADRs, `package-info.java` and `format.md` it names → the [conventions](conventions/) as each step needs them |
+| **Evaluate the project** in ten minutes | the [README](../README.md) → the [M4.5 case study](architecture/m4-5-integrity-boundaries.md) → [charter §5](roadmap/charter.md#5-the-end-goal-what-someone-sees-at-v10) (the end goal and how it is checked) → the [bug log](bug-log.md), open defects included → [completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed) → one explainer, e.g. [M4](architecture/m4-merge-iterator.md) |
+| **Build the next milestone** | [CONTRIBUTING](../CONTRIBUTING.md) (setup and the loop) → [CLAUDE.md](../CLAUDE.md) (the non-negotiables) → [completion plan §10](roadmap/completion-plan.md#10-status) (the first milestone not ✅: **M5**) → its plan, and the ADRs, `package-info.java` and `format.md` it names → the [conventions](conventions/) as each step needs them |
 
 ## The kinds of document
 
@@ -79,15 +79,16 @@ flowchart LR
 
 ## Where the project is now
 
-Through **M4** (tag `m4-merge`): an engine that recovers from process crashes, with a write-ahead
-log, a hand-written lock-free skiplist memtable, flush to LevelDB-style SSTables, and streaming
-reads through a heap-based multi-way merge with reconciliation.
+Through **M4.5** (tag `m4.5-integrity`): an engine that recovers from process crashes, with a
+write-ahead log whose every fragment header is checksummed, a hand-written lock-free skiplist
+memtable, flush to LevelDB-style SSTables, and streaming reads through a heap-based multi-way merge
+with reconciliation. Recovery and every decoder decide only on bytes they have verified.
 
-**Next is M4.5.** An external engineering review (October 2026) found defects that the
-[bug log's open register](bug-log.md#open-defects) lists, including two one-bit WAL header faults
-that silently lose acknowledged writes. Every one of its findings has an owning step in the
-[completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed),
-and [ADR-0024](adr/0024-recovery-integrity-boundaries.md) records the response. See the
+M4.5 answered an external engineering review (October 2026): its
+[case study](architecture/m4-5-integrity-boundaries.md) is the place to start. The review's
+remaining findings each have an owning step in the
+[completion plan §11](roadmap/completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed);
+the five open defects are in the [bug log](bug-log.md#open-defects). **Next is M5.** See the
 [README status](../README.md) and the [changelog](../CHANGELOG.md) for specifics, and the
 [completion plan](roadmap/completion-plan.md) for what comes next; the
 [architecture index](architecture/README.md) lists the as-built HLD/LLD design of every completed

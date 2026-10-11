@@ -13,7 +13,7 @@ for advancing between milestones, and every one of them is a test result.
 | Unit | (none) | < 10 s total | Every build | ✅ M0 |
 | Model | `@Tag("model")` | ~1 min | Every build | ✅ M0 |
 | Property | `@Tag("property")` | ~2 min | Every build | ✅ M0 (untagged; runs in the default task) |
-| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation only (M1); log-framing matrices at M4.5; fault injection at M5 |
+| Crash | `@Tag("crash")` | ~10 min | Pre-merge, nightly | ⚠️ partial — WAL truncation (M1); every byte of the log goldens (M4.5); fault injection at M5 |
 | Soak | `@Tag("soak")` | hours | Nightly, before a milestone tag | ❌ M6 — needs compaction to be worth running |
 | Logic (ShaleDB) | (none; `.slt` files) | < 1 min | Every build | ❌ D2 — sqllogictest-style SQL suites and the differential query test |
 

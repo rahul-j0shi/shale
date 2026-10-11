@@ -5,13 +5,13 @@ keys to byte values in a directory on disk, durably. It is what LevelDB and Rock
 from scratch. You link it into your program; there is no server to run.
 
 This guide is kept true to the code as it stands: each milestone updates it in the same change.
-It describes the engine **as built through M4**. Where a limitation will lift at a later milestone,
+It describes the engine **as built through M4.5**. Where a limitation will lift at a later milestone,
 it says which.
 
 > **Is it production-ready?** No. Shale is a learning and portfolio project, with serious testing
 > but no production use. Use it to learn, to experiment, or to read. Do not store data you cannot
-> afford to lose. **Read §10 first:** it lists known defects, including two one-bit WAL faults that
-> can silently lose acknowledged writes, and the milestone that fixes each.
+> afford to lose. **Read §10 first:** it lists the known defects, and the milestone that fixes
+> each.
 
 ---
 
@@ -119,9 +119,9 @@ writes in a segment whose directory entry has already reached the disk on its ow
 | Failure model | What it means | Covered today by |
 |---|---|---|
 | Clean restart | `close()`, then `open` | the model test: thousands of random operations with restarts, against a `TreeMap` |
-| Torn tail | the log ends mid-append | `ShaleCrashTest`: the WAL truncated at every byte offset, recovering exactly the complete records |
+| Torn tail | the log ends mid-append | `ShaleCrashTest` and `LogV2TruncationTest`: the WAL cut at every byte offset, recovering exactly the complete records, and naming how the file ended. Only the newest WAL segment may be torn |
 | Process death | `kill -9`; the OS page cache survives | the truncation test above; a real child-process kill arrives at D5 |
-| Malformed bytes | a file changed after it was written | SSTables: every byte flipped, and each case detected or proven harmless. **The WAL has no such test yet, and two one-bit header faults go undetected (§10)** — M4.5 |
+| Malformed bytes | a file changed after it was written | every bit of every WAL header, and of small WAL files and SSTables, flipped: each is detected (the WAL) or detected or provably harmless (SSTables); malformed structures with valid checksums, for every decoder. A damaged WAL header is never mistaken for a torn tail (ADR-0024) |
 | Simulated power loss | unsynced data and directory entries vanish | nothing yet — M5's fault-injection filesystem |
 | Physical power loss | a real machine loses power | never tested; argued from fsync ordering |
 
@@ -140,10 +140,25 @@ writes in a segment whose directory entry has already reached the disk on its ow
 
 | Exception (all unchecked) | Means | What to do |
 |---|---|---|
-| `CorruptionException` | bytes on disk are wrong (a checksum mismatch, a bad structure) | stop, and keep the directory for inspection. Shale does not mean to repair anything silently, but two WAL header faults currently slip past it (§10). Some malformed SSTable fields still surface as other runtime exceptions until M4.5 |
+| `CorruptionException` | bytes on disk are wrong (a checksum mismatch, a bad structure) | stop, and keep the directory for inspection: Shale repairs nothing silently, and a refused `open` changes no file. One case has an explicit way out: see *An unverifiable WAL tail* below |
 | `StorageException` | the environment failed: I/O error, disk full, permissions | fix the environment, then **close and reopen before writing again**: nothing stops further writes yet (M5 does), and continuing can make `get` and `scan` disagree. If it came from a flush the write triggered, that write was already logged and applied, so treat its outcome as **unknown**, not as absent |
 | `EngineStateException` | the engine cannot serve the request now | today: not thrown. From M5: closed, or failed after an I/O error — reopen |
 | `IllegalArgumentException` | a caller bug, such as a `null` key | fix the calling code |
+
+**An unverifiable WAL tail.** WAL segments written before M4.5 (format v1) have no checksum on
+their fragment headers. If such a segment ends with a complete header whose payload runs past the
+end of the file, Shale cannot tell a crash mid-write from a damaged length, so `open` refuses it
+rather than guess:
+
+```text
+CorruptionException: unverifiable WAL tail in 000001.wal at offset 16: header claims 16400
+payload bytes, 39 present; v1 cannot tell a torn append from a damaged length — to accept
+losing this tail, truncate the file to 16 bytes and reopen
+```
+
+If you accept losing the records in that tail, do what it says and reopen, for example
+`truncate -s 16 data/000001.wal`. Nothing does this for you, and the directory is unchanged until
+you do. Segments written from M4.5 on carry a header checksum and never need this.
 
 ## 8. Metrics
 
@@ -180,8 +195,7 @@ online consistent backup.
 
 | Limitation | Lifts at |
 |---|---|
-| **One bit flipped in a WAL fragment header (its type, or its length) can make `open` succeed with acknowledged writes missing, and then delete the log** | M4.5 |
-| **Malformed SSTable metadata** can be misread, or raise `ArithmeticException` or `ArrayIndexOutOfBoundsException` instead of `CorruptionException` | M4.5 |
+| **A crash mid-payload in a WAL segment written before M4.5 (v1)** does not open on its own: see *An unverifiable WAL tail* in §7 | permanent for v1 segments; v2 segments recover on their own |
 | **`SYNC` is not yet power-loss durable** across a segment switch or a flush (§5) | M5 |
 | **After a `StorageException`, writes are still accepted**; continuing without a reopen can make reads disagree | M5 |
 | **A failed `open` or `scan` leaks file handles**: retry a few times, not in a loop | M5 |
