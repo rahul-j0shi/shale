@@ -44,15 +44,31 @@ public final class WalWriter implements AutoCloseable {
     log.append(payload);
     metrics.increment("wal.append.count", 1);
     if (durability != Durability.NONE) {
-      long start = clock.nanoTime();
-      log.sync(); // the DURABILITY point is LogWriter.sync's force
-      metrics.increment("wal.sync.count", 1);
-      metrics.record("wal.sync.duration", clock.nanoTime() - start);
+      sync();
     }
   }
 
+  /**
+   * Syncs the segment, then closes it. A closed segment is therefore complete on disk, so recovery
+   * can require every segment but the newest to end cleanly: only the newest can have been cut
+   * short by a crash (ADR-0024 §5). It costs one fsync per memtable switch. Without it, a power
+   * loss after a switch could lose {@code NONE} writes in this segment while {@code SYNC} writes in
+   * the next one survive, and recovery would no longer restore a prefix of the writes.
+   */
   @Override
   public void close() throws IOException {
-    log.close();
+    try {
+      // DURABILITY: a closed segment is complete, so only the newest can be torn (ADR-0024 §5).
+      sync();
+    } finally {
+      log.close();
+    }
+  }
+
+  private void sync() throws IOException {
+    long start = clock.nanoTime();
+    log.sync(); // the force itself, and its DURABILITY comment, are in LogWriter.sync
+    metrics.increment("wal.sync.count", 1);
+    metrics.record("wal.sync.duration", clock.nanoTime() - start);
   }
 }

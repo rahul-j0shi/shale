@@ -4,6 +4,7 @@ import dev.shale.internal.annotations.ThreadSafe;
 import dev.shale.internal.key.InternalKey;
 import dev.shale.internal.key.InternalKeyComparator;
 import dev.shale.internal.key.ValueType;
+import dev.shale.internal.log.LogReadResult;
 import dev.shale.iterator.InternalIterator;
 import dev.shale.iterator.MergingIterator;
 import dev.shale.iterator.ReconcilingCursor;
@@ -157,11 +158,14 @@ public final class Shale implements StorageBackend {
       maxFileNumber = Math.max(maxFileNumber, numberOf(table));
     }
 
-    // Replay any WAL segments into one recovery memtable.
+    // Replay any WAL segments into one recovery memtable. Every throw from here on happens before
+    // the recovery flush writes a table or any segment is deleted, so a rejected open leaves every
+    // input as it was (ADR-0024 §4).
     Memtable recovered = new SkiplistMemtable(comparator, SKIPLIST_SEED);
     List<Path> walSegments = filesInOrder(directory, WAL_SEGMENT);
-    for (Path segment : walSegments) {
-      for (byte[] payload : WalReader.readAll(segment, RecoveryPolicy.TRUNCATE_TAIL)) {
+    for (int i = 0; i < walSegments.size(); i++) {
+      Path segment = walSegments.get(i);
+      for (byte[] payload : replay(segment, i == walSegments.size() - 1)) {
         WalRecordCodec.Decoded decoded = WalRecordCodec.decode(payload);
         recovered.add(decoded.internalKey().encode(), decoded.value());
         maxSequence = Math.max(maxSequence, decoded.internalKey().sequenceNumber());
@@ -393,6 +397,29 @@ public final class Shale implements StorageBackend {
     if (userKey == null || value == null || durability == null) {
       throw new IllegalArgumentException("userKey, value, and durability must be non-null");
     }
+  }
+
+  /**
+   * The records of one WAL segment, under the engine's recovery policy ({@link
+   * RecoveryPolicy#TRUNCATE_TAIL}) and ADR-0024 §2's rule that <b>only the newest segment may end
+   * torn</b>. Every older segment was synced when it was closed (see {@link WalWriter#close()}), so
+   * a crash cannot have cut it short; if one ends torn, its bytes were lost or damaged some other
+   * way, and dropping its tail would silently lose writes. That is corruption (N4).
+   */
+  private static List<byte[]> replay(Path segment, boolean newest) throws IOException {
+    LogReadResult result = WalReader.read(segment);
+    if (!newest && result.tail() != LogReadResult.Tail.CLEAN) {
+      throw new CorruptionException(
+          "WAL segment "
+              + segment.getFileName()
+              + " ends torn ("
+              + result.tail()
+              + ") but is not the newest: only the newest segment can be cut short by a crash",
+          result.tailOffset(),
+          -1,
+          -1);
+    }
+    return result.records();
   }
 
   /**
