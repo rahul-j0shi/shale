@@ -39,6 +39,11 @@ import java.util.Set;
  *       ({@link DropMode#TORN}).
  * </ul>
  *
+ * <p>Before a directory sync, POSIX promises no order among a directory's entry changes, so a power
+ * loss may keep any subset of them. {@link EntryLoss#UNDO_ALL} keeps none; {@link
+ * EntryLoss#KEEP_DELETES} keeps exactly the deletes, the subset that loses the most data: a file
+ * deleted because a replacement was renamed into place is gone, while the rename is not.
+ *
  * <p>This is exact for Shale because every file it writes is append-only, or written once and
  * renamed into place: there is no unsynced overwrite to model. A filesystem may lose less than
  * this, never more. Files that existed before this env saw them, and directories, are treated as
@@ -62,6 +67,14 @@ public final class FaultInjectionEnv implements Env {
     DROP,
     /** A seeded random prefix of them: a write the disk had only partly completed. */
     TORN
+  }
+
+  /** Which of the unsynced directory-entry changes a power loss keeps. */
+  public enum EntryLoss {
+    /** None: every unsynced create, rename and delete is undone. */
+    UNDO_ALL,
+    /** The deletes; every unsynced create and rename is undone. */
+    KEEP_DELETES
   }
 
   private static final String TRASH = ".fault-trash";
@@ -128,12 +141,18 @@ public final class FaultInjectionEnv implements Env {
     dropUnsyncedData(DropMode.DROP, 0);
   }
 
+  /** As {@code dropUnsyncedData(mode, EntryLoss.UNDO_ALL, seed)}. */
+  public void dropUnsyncedData(DropMode mode, long seed) throws IOException {
+    dropUnsyncedData(mode, EntryLoss.UNDO_ALL, seed);
+  }
+
   /**
    * Simulates a power loss now (see the class comment), then revives the env: the dead process's
    * handles and locks are closed, the crash point is cleared, and everything left on disk counts as
    * durable.
    */
-  public synchronized void dropUnsyncedData(DropMode mode, long seed) throws IOException {
+  public synchronized void dropUnsyncedData(DropMode mode, EntryLoss entries, long seed)
+      throws IOException {
     for (Closeable handle : List.copyOf(live)) {
       handle.close(); // the process died: the kernel closes its files and drops its locks
     }
@@ -142,6 +161,9 @@ public final class FaultInjectionEnv implements Env {
     unsyncedChanges.values().forEach(all::addAll);
     all.sort((a, b) -> Long.compare(b.sequence(), a.sequence())); // newest first
     for (DirectoryChange change : all) {
+      if (entries == EntryLoss.KEEP_DELETES && change instanceof DirectoryChange.Deleted) {
+        continue; // this delete reached the disk; its file stays in the trash, emptied below
+      }
       change.undo(this);
     }
     Random random = new Random(seed);
@@ -308,10 +330,15 @@ public final class FaultInjectionEnv implements Env {
     return destination;
   }
 
-  /** Moves a file back during undo, carrying its durable-length record with it. */
+  /**
+   * Moves a file back during undo, carrying its durable-length record with it. Nothing to move if a
+   * later change, kept by {@link EntryLoss#KEEP_DELETES}, already removed it.
+   */
   void restore(Path from, Path to) throws IOException {
-    Files.move(from, to);
-    moveState(from, to);
+    if (Files.exists(from)) {
+      Files.move(from, to);
+      moveState(from, to);
+    }
   }
 
   void undoCreate(Path file) throws IOException {

@@ -119,6 +119,34 @@ class FaultInjectionEnvTest {
   }
 
   @Test
+  void keepDeletes_keepsAnUnsyncedDelete_butUndoesTheRenameBeforeIt() throws IOException {
+    // A flush without a directory sync: the table is renamed into place, its WAL segment deleted.
+    write("000001.wal", "segment");
+    write("000002.sst.tmp", "table");
+    env.syncDirectory(dir);
+    env.rename(dir.resolve("000002.sst.tmp"), dir.resolve("000002.sst"));
+    env.delete(dir.resolve("000001.wal"));
+
+    env.dropUnsyncedData(
+        FaultInjectionEnv.DropMode.DROP, FaultInjectionEnv.EntryLoss.KEEP_DELETES, 0);
+
+    assertThat(env.children(dir)).containsExactly("000002.sst.tmp");
+  }
+
+  @Test
+  void keepDeletes_ofAFileRenamedEarlier_undoesWhatItCan() throws IOException {
+    write("a.tmp", "x");
+    env.syncDirectory(dir);
+    env.rename(dir.resolve("a.tmp"), dir.resolve("a"));
+    env.delete(dir.resolve("a"));
+
+    env.dropUnsyncedData(
+        FaultInjectionEnv.DropMode.DROP, FaultInjectionEnv.EntryLoss.KEEP_DELETES, 0);
+
+    assertThat(env.children(dir)).isEmpty();
+  }
+
+  @Test
   void crashAt_throwsAtExactlyThatOperation_andAtEveryOneAfter() throws IOException {
     WritableFile file = env.newWritableFile(dir.resolve("a")); // operation 0
     file.append(ascii("x")); // 1
