@@ -171,15 +171,23 @@ class ShaleRecoveryBoundaryTest {
         .isEqualTo(before);
   }
 
-  /** File name → SHA-256 of its bytes, for every file in the directory except {@code *.tmp}. */
+  /**
+   * File name → SHA-256 of its bytes, for every file in the directory except {@code *.tmp} and
+   * {@code LOCK}, which an open creates empty and never writes: it holds no data.
+   */
   private Map<String, String> snapshot() throws IOException {
     Map<String, String> files = new TreeMap<>();
     try (Stream<Path> entries = Files.list(dir)) {
-      for (Path path : entries.filter(p -> !p.toString().endsWith(".tmp")).toList()) {
+      for (Path path : entries.filter(ShaleRecoveryBoundaryTest::isData).toList()) {
         files.put(path.getFileName().toString(), sha256(Files.readAllBytes(path)));
       }
     }
     return files;
+  }
+
+  private static boolean isData(Path path) {
+    String name = path.getFileName().toString();
+    return !name.endsWith(".tmp") && !name.equals("LOCK");
   }
 
   private static String sha256(byte[] bytes) {

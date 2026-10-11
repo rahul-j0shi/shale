@@ -17,6 +17,7 @@ import dev.shale.wal.RecoveryPolicy;
 import dev.shale.wal.WalReader;
 import dev.shale.wal.WalRecordCodec;
 import dev.shale.wal.WalWriter;
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -61,6 +62,7 @@ public final class Shale implements StorageBackend {
   private static final Pattern WAL_SEGMENT = Pattern.compile("\\d{6}\\.wal");
   private static final Pattern SSTABLE_FILE = Pattern.compile("\\d{6}\\.sst");
   private static final String TEMP_SUFFIX = ".tmp";
+  private static final String LOCK_FILE = "LOCK";
   private static final byte[] NO_VALUE = new byte[0];
 
   /**
@@ -76,6 +78,10 @@ public final class Shale implements StorageBackend {
 
   private final Object writeLock = new Object();
   private final Env env;
+
+  /** The directory's {@code LOCK}, held from open to close. */
+  private final Closeable lock;
+
   private final Path directory;
   private final Clock clock;
   private final Metrics metrics;
@@ -108,6 +114,7 @@ public final class Shale implements StorageBackend {
 
   private Shale(
       Env env,
+      Closeable lock,
       Path directory,
       Clock clock,
       Metrics metrics,
@@ -120,6 +127,7 @@ public final class Shale implements StorageBackend {
       long nextSequence,
       ReadView view) {
     this.env = env;
+    this.lock = lock;
     this.directory = directory;
     this.clock = clock;
     this.metrics = metrics;
@@ -156,17 +164,40 @@ public final class Shale implements StorageBackend {
 
   /**
    * Opens (or recovers) an engine with {@code options}, doing every file operation through {@link
-   * ShaleOptions#env()}: a test passes a fault-injecting one (ADR-0012). The active memtable is
-   * flushed to an SSTable once it reaches {@link ShaleOptions#writeBufferSizeBytes()}. Recovery
-   * loads the existing SSTables, replays any WAL into a memtable, flushes that memtable to a fresh
-   * SSTable, and deletes the replayed segments — so a reopen leaves the log empty and all recovered
-   * data in tables.
+   * ShaleOptions#env()}: a test passes a fault-injecting one (ADR-0012). It first takes the
+   * directory's {@code LOCK}; if another engine holds it, it throws {@link EngineStateException}.
+   * The active memtable is flushed to an SSTable once it reaches {@link
+   * ShaleOptions#writeBufferSizeBytes()}. Recovery loads the existing SSTables, replays any WAL
+   * into a memtable, flushes that memtable to a fresh SSTable, and deletes the replayed segments —
+   * so a reopen leaves the log empty and all recovered data in tables.
    */
   public static Shale open(Path directory, ShaleOptions options, Clock clock, Metrics metrics)
       throws IOException {
-    Env env = options.env();
-    long writeBufferSizeBytes = options.writeBufferSizeBytes();
-    env.createDirectories(directory);
+    options.env().createDirectories(directory);
+    // LOCK first: a second engine on this directory would replay and delete the same files.
+    Closeable lock = options.env().lock(directory.resolve(LOCK_FILE));
+    boolean opened = false;
+    try {
+      Shale shale = recover(new Opening(directory, options, clock, metrics), lock);
+      opened = true;
+      return shale;
+    } finally {
+      if (!opened) {
+        lock.close(); // a refused open must not keep the directory locked
+      }
+    }
+  }
+
+  /** What {@link #open} was asked to open, passed to {@link #recover} as one value. */
+  private record Opening(Path directory, ShaleOptions options, Clock clock, Metrics metrics) {}
+
+  /** Recovery proper, under {@code lock}, which the returned engine owns. */
+  private static Shale recover(Opening opening, Closeable lock) throws IOException {
+    Path directory = opening.directory();
+    Env env = opening.options().env();
+    Clock clock = opening.clock();
+    Metrics metrics = opening.metrics();
+    long writeBufferSizeBytes = opening.options().writeBufferSizeBytes();
     KeyComparator comparator = BytewiseComparator.INSTANCE;
     InternalKeyComparator ordering = new InternalKeyComparator(comparator);
     deleteTempTables(env, directory); // clean any incomplete table from a crashed flush
@@ -213,6 +244,7 @@ public final class Shale implements StorageBackend {
     ReadView view = new ReadView(active, List.of(), List.copyOf(sstablesNewestFirst));
     return new Shale(
         env,
+        lock,
         directory,
         clock,
         metrics,
@@ -441,10 +473,10 @@ public final class Shale implements StorageBackend {
   }
 
   /**
-   * Closes the engine: syncs and closes the WAL and drops the engine's reference to every table.
-   * Idempotent: a second call does nothing. Afterwards {@code put}, {@code delete}, {@code get} and
-   * {@code scan} throw {@link EngineStateException}; a cursor opened before keeps reading, because
-   * it holds its own reference to every table it reads.
+   * Closes the engine: syncs and closes the WAL, drops the engine's reference to every table, and
+   * releases {@code LOCK}. Idempotent: a second call does nothing. Afterwards {@code put}, {@code
+   * delete}, {@code get} and {@code scan} throw {@link EngineStateException}; a cursor opened
+   * before keeps reading, because it holds its own reference to every table it reads.
    */
   @Override
   public void close() {
@@ -461,7 +493,16 @@ public final class Shale implements StorageBackend {
         for (SSTableReader table : view.sstablesNewestFirst()) {
           table.release();
         }
+        releaseLock();
       }
+    }
+  }
+
+  private void releaseLock() {
+    try {
+      lock.close();
+    } catch (IOException e) {
+      throw new StorageException("releasing LOCK failed", e);
     }
   }
 
