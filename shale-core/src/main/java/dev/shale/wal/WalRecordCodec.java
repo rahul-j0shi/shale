@@ -35,27 +35,42 @@ public final class WalRecordCodec {
     return out;
   }
 
-  /** Decodes a WAL record payload; a length that overruns the payload is corruption (N4). */
+  /**
+   * Decodes a WAL record payload, under ADR-0024 §6's decoder contract (N4):
+   *
+   * <ul>
+   *   <li>each length is a {@code varint32}, decoded wide and rejected at 2^32 or more;
+   *   <li>it is checked against the bytes remaining <em>by subtraction, as a {@code long}</em>,
+   *       before it is narrowed or anything is allocated. A length that once narrowed to a
+   *       plausible small number (2^32 + 9 → 9) cannot (SH-13);
+   *   <li>the payload is consumed exactly: bytes after the value are corruption, since format v1
+   *       defines none.
+   * </ul>
+   */
   public static Decoded decode(byte[] payload) {
-    Varints.Decoded keyLen = Varints.get(payload, 0);
-    int keyStart = keyLen.nextOffset();
-    int keyBytes = (int) keyLen.value();
-    byte[] internalKey = slice(payload, keyStart, keyBytes);
+    Varints.Decoded keyLength = Varints.getUnsigned32(payload, 0);
+    int keyStart = keyLength.nextOffset();
+    byte[] internalKey = slice(payload, keyStart, keyLength.value(), "internal key");
 
-    Varints.Decoded valueLen = Varints.get(payload, keyStart + keyBytes);
-    int valueStart = valueLen.nextOffset();
-    int valueBytes = (int) valueLen.value();
-    byte[] value = slice(payload, valueStart, valueBytes);
+    Varints.Decoded valueLength = Varints.getUnsigned32(payload, keyStart + internalKey.length);
+    int valueStart = valueLength.nextOffset();
+    byte[] value = slice(payload, valueStart, valueLength.value(), "value");
 
+    int end = valueStart + value.length;
+    if (end != payload.length) {
+      throw new CorruptionException(
+          "trailing bytes after the WAL record value", end, 0, payload.length - end);
+    }
     return new Decoded(InternalKey.decode(internalKey), value);
   }
 
-  private static byte[] slice(byte[] payload, int start, int length) {
-    if (length < 0 || start + length > payload.length) {
+  private static byte[] slice(byte[] payload, int start, long length, String field) {
+    long remaining = (long) payload.length - start;
+    if (length > remaining) {
       throw new CorruptionException(
-          "WAL record field overruns payload", start, length, payload.length - start);
+          "WAL record " + field + " length overruns the payload", start, remaining, length);
     }
-    return Arrays.copyOfRange(payload, start, start + length);
+    return Arrays.copyOfRange(payload, start, start + (int) length);
   }
 
   /**
