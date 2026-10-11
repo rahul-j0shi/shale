@@ -84,6 +84,8 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
       SSTableReader reader = new SSTableReader(path, file, size, comparator, indexBlock);
       opened = true;
       return reader;
+    } catch (CorruptionException e) {
+      throw e.inFile(path);
     } finally {
       if (!opened) {
         file.close(); // a bad footer/index must not leak the handle
@@ -145,6 +147,8 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
   private Block dataBlockAt(BlockHandle handle) {
     try {
       return new Block(readBlock(file, fileSizeBytes, handle));
+    } catch (CorruptionException e) {
+      throw e.inFile(path);
     } catch (IOException e) {
       throw new StorageException("reading SSTable " + path, e);
     }

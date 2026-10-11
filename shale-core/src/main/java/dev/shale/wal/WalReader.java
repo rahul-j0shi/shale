@@ -41,8 +41,7 @@ public final class WalReader {
   public static List<byte[]> readAll(Env env, Path path, RecoveryPolicy policy) throws IOException {
     LogReadResult result = read(env, path);
     if (result.tail() != LogReadResult.Tail.CLEAN && policy == RecoveryPolicy.STRICT) {
-      throw new CorruptionException(
-          "torn record at WAL tail of " + path.getFileName(), result.tailOffset(), -1, -1);
+      throw new CorruptionException(path, "torn record at WAL tail", result.tailOffset(), -1, -1);
     }
     return result.records();
   }
@@ -68,7 +67,12 @@ public final class WalReader {
 
   /** As {@link #read(Path)}, through {@code env}. */
   public static LogReadResult read(Env env, Path path) throws IOException {
-    return read(path.getFileName().toString(), env.readAllBytes(path));
+    byte[] data = env.readAllBytes(path);
+    try {
+      return read(path.getFileName().toString(), data);
+    } catch (CorruptionException e) {
+      throw e.inFile(path);
+    }
   }
 
   /** {@link #read(Path)} over bytes already in memory; {@code name} appears in error messages. */

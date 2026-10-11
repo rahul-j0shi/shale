@@ -227,7 +227,7 @@ public final class Shale implements StorageBackend {
     for (int i = 0; i < walSegments.size(); i++) {
       Path segment = walSegments.get(i);
       for (byte[] payload : replay(env, segment, i == walSegments.size() - 1)) {
-        WalRecordCodec.Decoded decoded = WalRecordCodec.decode(payload);
+        WalRecordCodec.Decoded decoded = decode(segment, payload);
         recovered.add(decoded.internalKey().encode(), decoded.value());
         maxSequence = Math.max(maxSequence, decoded.internalKey().sequenceNumber());
       }
@@ -543,6 +543,7 @@ public final class Shale implements StorageBackend {
     LogReadResult result = WalReader.read(env, segment);
     if (!newest && result.tail() != LogReadResult.Tail.CLEAN) {
       throw new CorruptionException(
+          segment,
           "WAL segment "
               + segment.getFileName()
               + " ends torn ("
@@ -553,6 +554,14 @@ public final class Shale implements StorageBackend {
           -1);
     }
     return result.records();
+  }
+
+  private static WalRecordCodec.Decoded decode(Path segment, byte[] payload) {
+    try {
+      return WalRecordCodec.decode(payload);
+    } catch (CorruptionException e) {
+      throw e.inFile(segment);
+    }
   }
 
   /**
