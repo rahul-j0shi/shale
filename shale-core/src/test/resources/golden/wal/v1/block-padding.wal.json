@@ -1,0 +1,21 @@
+{
+  "format": "wal",
+  "formatVersion": 1,
+  "description": "Records sized so block 0 ends with 3 zero padding bytes and block 1 with 6; a small record follows in block 2.",
+  "fileBytes": 65575,
+  "fragments": [
+    { "offset": 16, "payloadBytes": 32758, "type": "FULL" },
+    { "offset": 32784, "payloadBytes": 32755, "type": "FULL" },
+    { "offset": 65552, "payloadBytes": 16, "type": "FULL" }
+  ],
+  "padding": [
+    { "offset": 32781, "bytes": 3 },
+    { "offset": 65546, "bytes": 6 }
+  ],
+  "recordEndOffsets": [32781, 65546, 65575],
+  "records": [
+    { "userKey": "p1", "sequenceNumber": 1, "valueType": "PUT", "value": "32744 bytes; byte i = (31 * i + 7) mod 251" },
+    { "userKey": "p2", "sequenceNumber": 2, "valueType": "PUT", "value": "32741 bytes; byte i = (31 * i + 7) mod 251" },
+    { "userKey": "p3", "sequenceNumber": 3, "valueType": "PUT", "value": "tail" }
+  ]
+}

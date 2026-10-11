@@ -162,7 +162,8 @@ The markdown was corrected with this plan; the Javadoc must say the same.
 
 ### Step 2 — capture the v1 fixtures (`m04-5/v1-fixtures`), ~1 day
 v1 goldens must be written by the v1 writer, so they are captured **before** Step 4 changes it.
-1. `test(wal)`: `WalV1FixtureGenerator`, a test-source `main` run once, writes:
+1. `test(wal)`: `WalFixtureGenerator`, a test-source `main` run once per format version with the
+   then-current writer, writes these from the contents defined in `WalFixtures`:
    - `golden/wal/v1/two-puts.wal`: `A`→`ack-A`, `B`→`ack-B`, `SYNC`, sequences 1–2. This is the
      review's fixture: 62 bytes, the first fragment header at offset 16, its length at 20–21, its
      type at 22.
