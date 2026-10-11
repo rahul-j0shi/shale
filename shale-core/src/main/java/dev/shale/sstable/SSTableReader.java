@@ -29,14 +29,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p><b>Threading:</b> thread-safe — the index block is immutable and data-block reads are
  * positional ({@link ReadableFile#read}), so concurrent readers do not interfere. <b>Ownership:</b>
  * reference-counted (N6): {@link #open} returns one reference; {@link #release} drops one and
- * closes the file at zero. File deletion on the last release arrives with the manifest (M5); at M3
- * nothing deletes a table.
+ * closes the file at zero. If the table has been {@linkplain #markObsolete marked obsolete} —
+ * removed from the durable live set by a manifest edit — that last release also deletes the file. A
+ * file therefore disappears exactly when no durable state and no reader refers to it
+ * (concurrency-and-resources.md §4; ADR-0012).
  *
  * @see <a href="https://github.com/google/leveldb/blob/main/table/table.cc">LevelDB table.cc</a>
  */
 @ThreadSafe
 public final class SSTableReader implements AutoCloseable, ReferenceCounted {
 
+  private final Env env;
   private final Path path;
   private final ReadableFile file;
   private final long fileSizeBytes;
@@ -44,12 +47,17 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
   private final Block indexBlock;
   private final AtomicInteger references = new AtomicInteger(1);
 
+  /** Set once, when a manifest edit removes the table; read by the last {@link #release}. */
+  private volatile boolean obsolete;
+
   private SSTableReader(
+      Env env,
       Path path,
       ReadableFile file,
       long fileSizeBytes,
       KeyComparator comparator,
       Block indexBlock) {
+    this.env = env;
     this.path = path;
     this.file = file;
     this.fileSizeBytes = fileSizeBytes;
@@ -81,7 +89,7 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
       validateLayout(footer, size - SSTableFormat.FOOTER_SIZE);
       Block indexBlock = new Block(readBlock(file, size, footer.indexHandle()));
       validateDataHandles(indexBlock, footer.metaindexHandle().offsetBytes(), comparator);
-      SSTableReader reader = new SSTableReader(path, file, size, comparator, indexBlock);
+      SSTableReader reader = new SSTableReader(env, path, file, size, comparator, indexBlock);
       opened = true;
       return reader;
     } catch (CorruptionException e) {
@@ -127,16 +135,42 @@ public final class SSTableReader implements AutoCloseable, ReferenceCounted {
     references.incrementAndGet();
   }
 
-  /** Drops a reference; the last release closes the file. */
+  /**
+   * Drops a reference. The last release closes the file and, if the table is obsolete, deletes it.
+   *
+   * @throws StorageException if closing or deleting fails; a table left behind is not in the
+   *     durable live set, so the next open deletes it
+   */
   @Override
   public void release() {
-    if (references.decrementAndGet() == 0) {
+    int remaining = references.decrementAndGet();
+    if (remaining < 0) {
+      throw new IllegalStateException("SSTable " + path + " released more often than retained");
+    }
+    if (remaining == 0) {
       try {
         file.close();
+        if (obsolete) {
+          env.delete(path);
+        }
       } catch (IOException e) {
-        throw new StorageException("closing SSTable " + path, e);
+        throw new StorageException("closing or deleting SSTable " + path, e);
       }
     }
+  }
+
+  /**
+   * Marks the table obsolete: it is no longer in the durable live set, so the release that drops
+   * the last reference deletes the file. Called by the {@code VersionSet} only after the manifest
+   * edit that removed the table is synced.
+   */
+  public void markObsolete() {
+    obsolete = true;
+  }
+
+  /** The table's file. */
+  public Path path() {
+    return path;
   }
 
   @Override
