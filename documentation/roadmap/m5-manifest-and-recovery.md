@@ -4,8 +4,8 @@
 engineering review: SH-01, SH-02, SH-04, SH-05, SH-09, SH-10 are closed here; see the
 [completion plan §11](completion-plan.md#11-the-october-2026-engineering-review-where-each-finding-is-closed)).
 **Depends on:** M4.5 — log framing v2 in `dev.shale.internal.log`, the newest-segment tail rule, a
-segment synced when it is closed (ADR-0024). **ADR:** 0012 (Step 1 writes it; this plan's §2 is
-what it records).
+segment synced when it is closed (ADR-0024). **ADR:** [0012](../adr/0012-manifest-and-recovery.md)
+(accepted in Step 1; it records this plan's §2).
 **Next:** [M5.5](m5-5-concurrent-write-path.md). **Estimate:** 3–4 focused weeks, in 9 steps.
 
 **Goal.** The set of live files comes from durable metadata (a manifest), not from listing the

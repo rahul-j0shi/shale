@@ -1,6 +1,6 @@
 # 0008. Durability modes, group commit, and an injected clock
 
-- **Status:** Accepted — its power-loss claim is qualified by [ADR-0024](0024-recovery-integrity-boundaries.md) §7: a `SYNC` record is power-loss durable only once its segment's directory entry is synced as well, which M5 adds
+- **Status:** Accepted — its power-loss claim is qualified by [ADR-0024](0024-recovery-integrity-boundaries.md) §7 and amended by [ADR-0012](0012-manifest-and-recovery.md): a `SYNC` record is power-loss durable once it is forced *and* every directory entry it depends on (its segment; after a flush, its table) is synced
 - **Date:** 2026-07-28
 - **Milestone:** M1
 - **Reversible:** partly — the `Durability` enum and the ordering invariant are hard to change (they are the engine's correctness contract, D4); the group-commit *mechanism* and the clock plumbing are freely revisable.

@@ -232,7 +232,7 @@ demonstrations. They are the claim.
 |---|---|---|---|---|
 | M0–M4 | ✅ | 3–6 | ~2.5 | tag `m4-merge`; see the [changelog](../../CHANGELOG.md) |
 | M4.5 | ✅ | 2–3 | ~2 days | tag `m4.5-integrity` once merged; 18 commits, 161 → 279 tests |
-| M5 | ⏭ next | 3–4 | | write ADR-0012 first |
+| M5 | ⏭ in progress | 3–4 | | Step 1 done: [ADR-0012](../adr/0012-manifest-and-recovery.md) accepted |
 | M5.5 · M6 · M7 · M8 | ☐ | 12–17 | | |
 | D1–D7 | ☐ | 17–24 | | |
 
