@@ -171,7 +171,7 @@ class ShaleManifestRecoveryTest {
     FaultInjectionEnv env = new FaultInjectionEnv(runRoot);
     Path dir = runRoot.resolve("db");
     ShaleOptions options = ShaleOptions.defaults().withWriteBufferSizeBytes(1000).withEnv(env);
-    long tableCreate = firstOperation("create", ".sst.tmp", options, dir, root.resolve("dry"));
+    long tableCreate = firstOperation("create", ".sst.tmp", options, root.resolve("dry"));
     env.failOn(tableCreate, new IOException("no space left on device"));
 
     try (Shale db = Shale.open(dir, options, Clock.system(), Metrics.NOOP)) {
@@ -293,16 +293,12 @@ class ShaleManifestRecoveryTest {
    * The index of the first operation whose trace line starts with {@code kind} and contains {@code
    * suffix}, found by running the SH-01 workload once without faults in {@code dryRoot}.
    */
-  private static long firstOperation(
-      String kind, String suffix, ShaleOptions options, Path dir, Path dryRoot) throws IOException {
+  private static long firstOperation(String kind, String suffix, ShaleOptions options, Path dryRoot)
+      throws IOException {
     Files.createDirectories(dryRoot);
     FaultInjectionEnv dry = new FaultInjectionEnv(dryRoot);
     try (Shale db =
-        Shale.open(
-            dryRoot.resolve(dir.getFileName()),
-            options.withEnv(dry),
-            Clock.system(),
-            Metrics.NOOP)) {
+        Shale.open(dryRoot.resolve("db"), options.withEnv(dry), Clock.system(), Metrics.NOOP)) {
       db.put(ascii("A"), filled('a', 100), Durability.SYNC);
       db.put(ascii("B"), filled('b', 100), Durability.SYNC);
       db.put(ascii("C"), filled('c', 2000), Durability.SYNC);
